@@ -1,5 +1,6 @@
-import { AppShell, Burger, Group, NavLink, Text, Title } from '@mantine/core';
+import { AppShell, Burger, Button, Group, NavLink, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { useAuth } from './auth/AuthContext';
 import { Navigate, NavLink as RouterNavLink, Route, Routes } from 'react-router';
 
 const pages = [
@@ -20,6 +21,7 @@ function Placeholder({ title }: { title: string }) {
 
 export function App() {
   const [opened, { toggle, close }] = useDisclosure();
+  const { signOut } = useAuth();
 
   return (
     <AppShell
@@ -33,6 +35,9 @@ export function App() {
           <Title order={1} size="h4">
             JDG Ledger
           </Title>
+          <Button variant="subtle" size="xs" ml="auto" onClick={() => void signOut()}>
+            Вийти
+          </Button>
         </Group>
       </AppShell.Header>
 

@@ -257,6 +257,8 @@ meta/allowlist             # email власника
 - Хуки для читання і запису `documents`, `settings`, `fxRates` через `onSnapshot`.
 - **Готово, коли:** після входу дані зберігаються і видні на іншому пристрої; інший акаунт отримує відмову.
 
+**Стан (2026-10-12):** код етапу зроблено, не закомічено. `apps/web/src`: `firebase/` (конфіг із `VITE_FIREBASE_*`, шляхи, підписки `onSnapshot`, офлайн-кеш), `auth/` (вхід через Google, `AuthGate`, `AccessGate`), `data/` (хуки й запис `settings`, `documents`, `fxRates`, синхронізація курсів NBP). `firestore.rules` + `firebase.json` + `packages/firestore-rules` (46 тестів на емуляторі): allowlist у `meta/allowlist { emails: [...] }`, лише власник (uid) з підтвердженою Google-поштою, `ksefInbox` — лише зміна `status`. Правила писав Sonnet 5.5 (effort extra) за рішенням власника замість Opus: бажано додатково переглянути на Opus. Лишилося після етапу 0: створити `meta/allowlist`, задеплоїти правила (`firebase deploy --only firestore:rules`), перевірити вхід на двох пристроях, додати `VITE_FIREBASE_*` у GitHub Secrets (`deploy.yml` уже передає їх у збірку). Блокування змін закритого місяця в правилах додається на етапі 8, коли з'являться `periods` і документ із датами (етап 4).
+
 ### Фаза B. Облік по документах (тіньовий режим)
 
 #### Етап 4. Документна модель у `packages/core`
