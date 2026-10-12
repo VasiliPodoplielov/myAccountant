@@ -246,8 +246,9 @@ meta/allowlist             # email власника
 - Пакет оформлено: `@jdg/core` у npm workspaces, експорт з `src/index.ts`.
 
 **Що лишилося зробити:**
-- Клієнт NBP: завантаження `api.nbp.pl/api/exchangerates/rates/a/eur/{from}/{to}/?format=json` у мапу `date → mid`. Пошук курсу вже робить `nbpRateFor(date, table)`. Кеш у Firestore `fxRates` додається на етапі 3.
-- **Готово, коли:** клієнт NBP покритий тестами, `npm test` зелений.
+- ~~Клієнт NBP~~ **готово**: `fetchNbpRates` у `packages/core/src/nbp.ts` для EUR і USD (`api.nbp.pl/api/exchangerates/rates/a/{eur|usd}/{from}/{to}/?format=json`) у мапу `date → mid`, поділ періоду на запити по 367 днів. Пошук курсу вже робить `nbpRateFor(date, table)`. Кеш у Firestore `fxRates` додається на етапі 3.
+- Валюти фактур: PLN, EUR, USD (`Currency` у `tax.ts`).
+- **Готово, коли:** клієнт NBP покритий тестами, `npm test` зелений. **Виконано.**
 
 #### Етап 3. Авторизація і дані
 
