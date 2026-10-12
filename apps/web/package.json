@@ -7,12 +7,14 @@
     "dev": "vite",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
     "@jdg/core": "*",
     "@mantine/core": "^9.7.2",
     "@mantine/hooks": "^9.7.2",
+    "firebase": "^13.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router": "^8.4.0"
@@ -25,6 +27,7 @@
     "postcss": "^8.5.29",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
   }
 }

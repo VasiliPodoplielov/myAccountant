@@ -15,6 +15,8 @@ npm workspaces (`apps/*`, `packages/*`), усі команди запускаю�
 
 «Прогнати перевірки» нижче означає всі чотири.
 
+Тести `packages/firestore-rules` запускають емулятор Firestore: потрібна **JDK 21+** (`java -version`) і доступ до `firebase-tools`. На Windows, якщо емулятор падає з `Unable to establish loopback connection`, задайте `JAVA_TOOL_OPTIONS=-Djdk.net.unixdomain.tmpdir=C:\jtmp -Djava.io.tmpdir=C:\jtmp` (тека має існувати).
+
 ## Git
 
 ### Гілки
