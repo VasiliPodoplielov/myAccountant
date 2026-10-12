@@ -82,14 +82,17 @@ export interface Income {
   net: number;
 }
 
+/** Валюти фактур; PLN — базова, решта конвертуються за курсом NBP */
+export type Currency = 'PLN' | 'EUR' | 'USD';
+
 export interface Cost {
   month: number;
-  currency: 'PLN' | 'EUR';
-  /** Netto у валюті фактури, найменші одиниці (гроші / євроценти) */
+  currency: Currency;
+  /** Netto у валюті фактури, найменші одиниці (гроші / центи) */
   amount: number;
   vatRate: number;
   category: CostCategory;
-  /** Курс NBP для EUR (ручний або знайдений через nbpRateFor). Для PLN ігнорується. */
+  /** Курс NBP для EUR/USD (ручний або знайдений через nbpRateFor). Для PLN ігнорується. */
   fxRate?: number | null;
 }
 
@@ -163,7 +166,7 @@ export interface MonthResult {
   pitAdvance: number;
   totalToPay: number;
   netCash: number;
-  /** Кількість EUR-витрат без курсу — їх не враховано */
+  /** Кількість валютних витрат (EUR/USD) без курсу — їх не враховано */
   missingFxRates: number;
 }
 
@@ -180,7 +183,7 @@ export function zusForMonth(cfg: TaxYearConfig, chorobowe: boolean) {
   return { social, fp, total: social + fp };
 }
 
-/** Перерахунок витрати в PLN-гроші. null, якщо для EUR немає курсу. */
+/** Перерахунок витрати в PLN-гроші. null, якщо для валюти немає курсу. */
 export function costNetPln(cost: Cost): number | null {
   if (cost.currency === 'PLN') return cost.amount;
   if (!cost.fxRate) return null;
@@ -315,7 +318,7 @@ export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
  * Курс NBP (tabela A) з останнього робочого дня ПЕРЕД датою фактури.
  * `table` — мапа 'YYYY-MM-DD' → mid. Повертає null, якщо в межах 10 днів курсу немає
  * або дата некоректна.
- * Дані: https://api.nbp.pl/api/exchangerates/rates/a/eur/{from}/{to}/?format=json
+ * Мапу для валюти будує fetchNbpRates (nbp.ts).
  */
 export function nbpRateFor(invoiceDate: string, table: Record<string, number>): { rate: number; date: string } | null {
   const d = new Date(`${invoiceDate}T12:00:00Z`);
