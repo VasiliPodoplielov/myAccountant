@@ -4,7 +4,12 @@ import { kpirContributions, kpirFromDocuments, kpirTotals } from '../kpir';
 import { calcYearFromDocuments } from '../ledger';
 import { TAX_CONFIG } from '../tax';
 import { vatDeclaration, vatRegisters, vatTotals } from '../vat';
-import { MONTH_FIXTURES } from './month-2026-03';
+import { january2026 } from './month-2026-01';
+import { march2026 } from './month-2026-03';
+import type { MonthFixture } from './types';
+
+/** Зразок, складений вручну, і справжні місяці бухгалтера (анонімізовані) */
+const MONTH_FIXTURES: MonthFixture[] = [march2026, january2026];
 
 /**
  * Критерій готовності етапу 4: підсумки KPiR і реєстрів VAT за місяць збігаються з бухгалтером до гроша.
