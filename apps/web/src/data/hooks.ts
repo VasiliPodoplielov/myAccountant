@@ -1,4 +1,4 @@
-import type { ForeignCurrency, YearSettings } from '@jdg/core';
+import type { ForeignCurrency, LedgerDocument, YearSettings } from '@jdg/core';
 import { deleteDoc, doc, setDoc, writeBatch } from 'firebase/firestore';
 import { useAuth } from '../auth/AuthContext';
 import { db } from '../firebase/app';
@@ -32,16 +32,13 @@ export function saveYearSettings(uid: string, year: number, settings: YearSettin
 
 // ---------------------------------------------------------------- documents/{id}
 
-/**
- * Первинні документи. Тип T задає етап 4 (`Document` у packages/core);
- * тут шар зберігання не залежить від його полів.
- */
-export function useDocuments<T>(): SnapshotState<(T & { id: string })[]> {
+/** Первинні документи: з них `@jdg/core` виводить KPiR, реєстри VAT і розрахунок року */
+export function useDocuments(): SnapshotState<(LedgerDocument & { id: string })[]> {
   const uid = useOwnUid();
-  return useCollectionData<T>(uid ? paths.documentsCollection(uid) : null);
+  return useCollectionData<LedgerDocument>(uid ? paths.documentsCollection(uid) : null);
 }
 
-export function saveDocument<T extends object>(uid: string, id: string, data: T): Promise<void> {
+export function saveDocument(uid: string, id: string, data: LedgerDocument): Promise<void> {
   return setDoc(doc(requireDb(), paths.document(uid, id).join('/')), data);
 }
 

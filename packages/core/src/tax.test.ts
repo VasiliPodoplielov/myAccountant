@@ -2,15 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { TAX_CONFIG, calcYear, costNetPln, dueDates, nbpRateFor, zusForMonth, type Cost, type YearInput } from './tax';
 
 const cfg = TAX_CONFIG[2026]!;
+// Тести нижче (до «wakacje składkowe») — для zdrowotnej, що відлічується від доходу (healthAsCost: false)
 const empty = (over: Partial<YearInput> = {}): YearInput => ({
   incomes: [],
   costs: [],
-  settings: { chorobowe: false, prevDecemberIncome: null, prevDecemberContributions: null },
+  settings: { chorobowe: false, prevDecemberIncome: null, prevDecemberContributions: null, healthAsCost: false },
   ...over,
 });
 // Składki за грудень 2025, сплачені в січні 2026
 const prevDecemberContributions = { social: 151_898, fp: 12_749, health: 50_000 };
-const withPrevDecember = { chorobowe: false, prevDecemberIncome: null, prevDecemberContributions };
+const withPrevDecember = { chorobowe: false, prevDecemberIncome: null, prevDecemberContributions, healthAsCost: false };
 
 describe('ZUS', () => {
   it('duży ZUS без chorobowego = 1 788,29 zł', () => {
@@ -183,5 +184,59 @@ describe('helpers', () => {
       pit: '2027-01-20',
       vat: '2027-01-25',
     });
+  });
+});
+
+describe('wakacje składkowe', () => {
+  const holiday = {
+    chorobowe: false,
+    prevDecemberIncome: null,
+    prevDecemberContributions: null,
+    contributionHolidayMonth: 2,
+  };
+  it('у місяці канікул społeczne і FP не нараховуються, zdrowotna лишається', () => {
+    const r = calcYear(empty({ settings: holiday }), cfg);
+    expect([r[1].zusSocial, r[1].fp, r[1].zusTotal]).toEqual([0, 0, 0]);
+    expect(r[1].health).toBe(43_254);
+    expect(r[1].totalToPay).toBe(43_254);
+    expect(r[0].zusTotal).toBe(178_829);
+    expect(r[2].zusTotal).toBe(178_829);
+  });
+  it('некоректний місяць канікул — помилка, а не тихий повний ZUS', () => {
+    for (const month of [0, 13, 2.5]) {
+      expect(() => calcYear(empty({ settings: { ...holiday, contributionHolidayMonth: month } }), cfg)).toThrow(
+        RangeError,
+      );
+    }
+    expect(calcYear(empty({ settings: { ...holiday, contributionHolidayMonth: null } }), cfg)[1].zusTotal).toBe(
+      178_829,
+    );
+  });
+  it('наступного місяця нічого не відлічується за канікули', () => {
+    const r = calcYear(empty({ incomes: [{ month: 3, net: 2_000_000 }], settings: holiday }), cfg);
+    expect([r[2].zusSocialPaid, r[2].fpPaid]).toEqual([0, 0]);
+    expect(r[2].healthPaid).toBe(43_254);
+    expect(r[2].monthlyIncomeAfterZus).toBe(2_000_000 - 43_254); // лише zdrowotna за лютий, вона в kosztach
+  });
+});
+
+describe('zdrowotna в kosztach', () => {
+  const incomes = [1, 2, 3].map((month) => ({ month, net: 2_000_000 }));
+  const base = { chorobowe: false, prevDecemberIncome: null, prevDecemberContributions: null };
+  it('зменшує дохід для zdrowotnej наступного місяця', () => {
+    const deducted = calcYear(empty({ incomes, settings: { ...base, healthAsCost: false } }), cfg);
+    const asCost = calcYear(empty({ incomes, settings: base }), cfg); // типово zdrowotna в kosztach
+    expect(calcYear(empty({ incomes, settings: { ...base, healthAsCost: true } }), cfg)).toEqual(asCost);
+    // у лютому сплачено zdrowotną за січень (мінімум 314,96)
+    expect(asCost[1].monthlyIncomeAfterZus).toBe(deducted[1].monthlyIncomeAfterZus - 31_496);
+    expect(asCost[1].healthIncome).toBe(deducted[1].healthIncome - 31_496);
+    expect(asCost[2].health).toBe(Math.round((deducted[1].healthIncome - 31_496) * 0.049));
+  });
+  it('на PIT не впливає: та сама podstawa і zaliczki', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, net: 6_000_000 }));
+    const deducted = calcYear(empty({ incomes: many, settings: { ...base, healthAsCost: false } }), cfg);
+    const asCost = calcYear(empty({ incomes: many, settings: base }), cfg);
+    expect(asCost[0].pitBase).toBe(deducted[0].pitBase);
+    expect(asCost[11].cumulativeHealthDeducted).toBe(1_410_000); // ліміт той самий
   });
 });

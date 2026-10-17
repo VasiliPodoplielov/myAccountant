@@ -65,13 +65,15 @@ export interface CategoryRule {
   pitShare: number;
   /** Import usług: VAT нараховується і відлічується самим платником */
   reverseCharge: boolean;
+  /** Колонка KPiR (взірець з 2026 року), у яку йде koszt */
+  kpirColumn: 12 | 13 | 14 | 15;
 }
 
 export const CATEGORY_RULES: Record<CostCategory, CategoryRule> = {
-  carMixed: { vatDeductible: 0.5, pitShare: 0.75, reverseCharge: false },
-  importServices: { vatDeductible: 1, pitShare: 1, reverseCharge: true },
-  office: { vatDeductible: 1, pitShare: 1, reverseCharge: false },
-  other: { vatDeductible: 1, pitShare: 1, reverseCharge: false },
+  carMixed: { vatDeductible: 0.5, pitShare: 0.75, reverseCharge: false, kpirColumn: 15 },
+  importServices: { vatDeductible: 1, pitShare: 1, reverseCharge: true, kpirColumn: 15 },
+  office: { vatDeductible: 1, pitShare: 1, reverseCharge: false, kpirColumn: 15 },
+  other: { vatDeductible: 1, pitShare: 1, reverseCharge: false, kpirColumn: 15 },
 };
 
 // ---------------------------------------------------------------- input
@@ -109,12 +111,45 @@ export interface YearSettings {
   prevDecemberIncome: number | null;
   /** Składki за грудень попереднього року, сплачені в січні; null → у січні нічого не відлічується */
   prevDecemberContributions: Contributions | null;
+  /**
+   * Місяць wakacji składkowych (1..12): społeczne і FP за нього оплачує бюджет, zdrowotna лишається.
+   * Право на них — раз на рік. null або не вказано — без канікул.
+   */
+  contributionHolidayMonth?: number | null;
+  /**
+   * Сплачена zdrowotna йде в koszty (у межах річного ліміту), а не відлічується від доходу. Типово так.
+   * На PIT це не впливає, але зменшує дохід, від якого рахується zdrowotna наступного місяця.
+   * false — zdrowotna відлічується від доходу і базу для zdrowotnej не зменшує.
+   */
+  healthAsCost?: boolean;
 }
 
 export interface YearInput {
   incomes: Income[];
   costs: Cost[];
   settings: YearSettings;
+}
+
+/**
+ * Місячні суми, з яких рахується рік. Джерело — суми за категоріями (categoryMonthSums)
+ * або первинні документи (documentMonthSums у ledger.ts).
+ */
+export interface MonthSums {
+  month: number;
+  /** Przychód PIT, гроші */
+  income: number;
+  /** VAT należny після округлення до злотих (продаж + import usług) */
+  vatOutput: number;
+  /** VAT naliczony до відліку після округлення до злотих */
+  vatInput: number;
+  /** VAT з import usług до округлення */
+  reverseChargeVat: number;
+  /** Koszty PIT без FP */
+  pitCosts: number;
+  /** Реальні грошові витрати (netto + невідлічений VAT) */
+  cashCosts: number;
+  /** Кількість валютних документів (EUR/USD) без курсу — їх не враховано */
+  missingFxRates: number;
 }
 
 // ---------------------------------------------------------------- output
@@ -143,7 +178,7 @@ export interface MonthResult {
   zusSocialPaid: number;
   /** FP, сплачений у цьому місяці (за попередній) — koszt */
   fpPaid: number;
-  /** Дохід за місяць: przychód − koszty − FP і społeczne, сплачені в цьому місяці */
+  /** Дохід за місяць: przychód − koszty − FP і społeczne (і zdrowotna, якщо вона в kosztach), сплачені в цьому місяці */
   monthlyIncomeAfterZus: number;
   /**
    * Дохід цього місяця для zdrowotnej, наростаючим підсумком з січня: збитковий місяць дає 0,
@@ -156,8 +191,10 @@ export interface MonthResult {
   health: number;
   /** Zdrowotna, сплачена в цьому місяці (за попередній) */
   healthPaid: number;
-  /** Частина healthPaid, відлічена від доходу в межах річного ліміту */
+  /** Частина healthPaid у межах річного ліміту: відлічена від доходу або внесена в koszty (healthAsCost) */
   healthDeducted: number;
+  /** Частина healthDeducted, внесена в koszty (0, якщо healthAsCost вимкнено): іде в KPiR разом із FP */
+  healthInCosts: number;
   cumulativeIncome: number;
   cumulativeHealthDeducted: number;
   /** Podstawa opodatkowania з січня, округлена до злотих */
@@ -166,14 +203,15 @@ export interface MonthResult {
   pitAdvance: number;
   totalToPay: number;
   netCash: number;
-  /** Кількість валютних витрат (EUR/USD) без курсу — їх не враховано */
+  /** Кількість валютних документів (EUR/USD) без курсу — їх не враховано */
   missingFxRates: number;
 }
 
 // ---------------------------------------------------------------- helpers
 
 const pct = (amount: number, rate: number) => Math.round(amount * rate);
-const toFullZloty = (grosze: number) => Math.round(grosze / 100) * 100;
+/** До злотих для старого шляху: вхід буває нецілим (частка від float); точне округлення — toFullZloty у money.ts */
+const roundToZloty = (grosze: number) => Math.round(grosze / 100) * 100;
 
 export function zusForMonth(cfg: TaxYearConfig, chorobowe: boolean) {
   const b = cfg.zusBase;
@@ -192,18 +230,9 @@ export function costNetPln(cost: Cost): number | null {
 
 // ---------------------------------------------------------------- main
 
-export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
-  const zus = zusForMonth(cfg, input.settings.chorobowe);
-  const results: MonthResult[] = [];
-
-  let carry = 0;
-  let cumIncome = 0;
-  let cumHealthDed = 0;
-  let cumPit = 0;
-  let cumHealthIncome = 0;
-  let prevHealthIncome = input.settings.prevDecemberIncome;
-  // Składki, сплачені в поточному місяці, тобто нараховані за попередній
-  let paid: Contributions = input.settings.prevDecemberContributions ?? { social: 0, fp: 0, health: 0 };
+/** Місячні суми з сум за категоріями: VAT і koszty рахуються й округлюються по місяцю */
+export function categoryMonthSums(input: Pick<YearInput, 'incomes' | 'costs'>, cfg: TaxYearConfig): MonthSums[] {
+  const sums: MonthSums[] = [];
 
   for (let m = 1; m <= 12; m++) {
     const income = input.incomes.filter((i) => i.month === m).reduce((a, i) => a + i.net, 0);
@@ -236,27 +265,84 @@ export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
         cashCosts += net + nonDeductible;
       }
     }
-    const pitCosts = Math.round(pitCostsRaw);
-    cashCosts = Math.round(cashCosts);
 
-    // VAT (JPK — повні злоті), з перенесенням надвишки
-    const vatOutput = toFullZloty(salesVat + rcVat);
-    const vatInput = toFullZloty(Math.round(vatIn));
+    sums.push({
+      month: m,
+      income,
+      // VAT (JPK — повні злоті)
+      vatOutput: roundToZloty(salesVat + rcVat),
+      vatInput: roundToZloty(Math.round(vatIn)),
+      reverseChargeVat: rcVat,
+      pitCosts: Math.round(pitCostsRaw),
+      cashCosts: Math.round(cashCosts),
+      missingFxRates: missing,
+    });
+  }
+
+  return sums;
+}
+
+export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
+  return calcYearFromSums(categoryMonthSums(input, cfg), input.settings, cfg);
+}
+
+const EMPTY_MONTH: Omit<MonthSums, 'month'> = {
+  income: 0,
+  vatOutput: 0,
+  vatInput: 0,
+  reverseChargeVat: 0,
+  pitCosts: 0,
+  cashCosts: 0,
+  missingFxRates: 0,
+};
+
+/** Рік із місячних сум; місяць, якого в `months` немає, вважається порожнім */
+export function calcYearFromSums(
+  months: readonly MonthSums[],
+  settings: YearSettings,
+  cfg: TaxYearConfig,
+): MonthResult[] {
+  const zus = zusForMonth(cfg, settings.chorobowe);
+  const healthAsCost = settings.healthAsCost ?? true;
+  const holiday = settings.contributionHolidayMonth ?? null;
+  if (holiday !== null && !(Number.isInteger(holiday) && holiday >= 1 && holiday <= 12)) {
+    throw new RangeError(`contributionHolidayMonth має бути місяцем 1..12, а не ${String(holiday)}`);
+  }
+  const results: MonthResult[] = [];
+
+  let carry = 0;
+  let cumIncome = 0;
+  let cumHealthDed = 0;
+  let cumPit = 0;
+  let cumHealthIncome = 0;
+  let prevHealthIncome = settings.prevDecemberIncome;
+  // Składki, сплачені в поточному місяці, тобто нараховані за попередній
+  let paid: Contributions = settings.prevDecemberContributions ?? { social: 0, fp: 0, health: 0 };
+
+  for (let m = 1; m <= 12; m++) {
+    const { income, vatOutput, vatInput, reverseChargeVat, pitCosts, cashCosts, missingFxRates } =
+      months.find((x) => x.month === m) ?? EMPTY_MONTH;
+
+    // VAT з перенесенням надвишки
     const vatCarryIn = carry;
     const vatBalance = vatOutput - vatInput - carry;
     const vatDue = Math.max(0, vatBalance);
     carry = vatBalance < 0 ? -vatBalance : 0;
 
-    // Дохід місяця після ZUS: відлічуються składki, сплачені в цьому місяці
-    const monthlyIncomeAfterZus = income - pitCosts - paid.fp - paid.social;
+    // Społeczne і FP за цей місяць; у місяці wakacji składkowych їх платить бюджет
+    const zusDue = m === holiday ? { social: 0, fp: 0, total: 0 } : zus;
 
     // Zdrowotna за цей місяць — від доходу попереднього
     const min = m === 1 ? cfg.healthMinJanuary : cfg.healthMin;
     const fromIncome = prevHealthIncome !== null && prevHealthIncome > 0 ? pct(prevHealthIncome, cfg.healthRate) : 0;
     const health = Math.max(fromIncome, min);
-    // До відліку йде zdrowotna, сплачена в цьому місяці
+    // До відліку (або в koszty) йде zdrowotna, сплачена в цьому місяці
     const healthDeducted = Math.max(0, Math.min(paid.health, cfg.healthDeductionLimit - cumHealthDed));
     cumHealthDed += healthDeducted;
+    const healthInCosts = healthAsCost ? healthDeducted : 0;
+
+    // Дохід місяця після ZUS: відлічуються składki, сплачені в цьому місяці
+    const monthlyIncomeAfterZus = income - pitCosts - paid.fp - paid.social - healthInCosts;
 
     cumIncome += monthlyIncomeAfterZus;
 
@@ -265,28 +351,29 @@ export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
     cumHealthIncome += healthIncome;
 
     // PIT наростаючим підсумком
-    const pitBase = Math.max(0, toFullZloty(cumIncome - cumHealthDed));
-    const pitTaxCumulative = toFullZloty(pitBase * cfg.pitRate);
+    // zdrowotna в kosztach уже зменшила дохід, тож удруге не відлічується
+    const pitBase = Math.max(0, roundToZloty(cumIncome - (healthAsCost ? 0 : cumHealthDed)));
+    const pitTaxCumulative = roundToZloty(pitBase * cfg.pitRate);
     const pitAdvance = Math.max(0, pitTaxCumulative - cumPit);
     cumPit += pitAdvance;
 
-    const totalToPay = vatDue + zus.total + health + pitAdvance;
-    const netCash = income - cashCosts - zus.total - health - pitAdvance;
+    const totalToPay = vatDue + zusDue.total + health + pitAdvance;
+    const netCash = income - cashCosts - zusDue.total - health - pitAdvance;
 
     results.push({
       month: m,
       income,
       vatOutput,
       vatInput,
-      reverseChargeVat: rcVat,
+      reverseChargeVat,
       vatCarryIn,
       vatCarryOut: carry,
       vatDue,
       pitCosts,
       cashCosts,
-      zusSocial: zus.social,
-      fp: zus.fp,
-      zusTotal: zus.total,
+      zusSocial: zusDue.social,
+      fp: zusDue.fp,
+      zusTotal: zusDue.total,
       zusSocialPaid: paid.social,
       fpPaid: paid.fp,
       monthlyIncomeAfterZus,
@@ -295,6 +382,7 @@ export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
       health,
       healthPaid: paid.health,
       healthDeducted,
+      healthInCosts,
       cumulativeIncome: cumIncome,
       cumulativeHealthDeducted: cumHealthDed,
       pitBase,
@@ -302,11 +390,11 @@ export function calcYear(input: YearInput, cfg: TaxYearConfig): MonthResult[] {
       pitAdvance,
       totalToPay,
       netCash,
-      missingFxRates: missing,
+      missingFxRates,
     });
 
     prevHealthIncome = healthIncome;
-    paid = { social: zus.social, fp: zus.fp, health };
+    paid = { social: zusDue.social, fp: zusDue.fp, health };
   }
 
   return results;
