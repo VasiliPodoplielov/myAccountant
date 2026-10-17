@@ -4,6 +4,7 @@
  * Кеш у Firestore (fxRates) додається на етапі 3.
  */
 
+import { isIsoDate } from './dates';
 import type { Currency } from './tax';
 
 export type ForeignCurrency = Exclude<Currency, 'PLN'>;
@@ -27,7 +28,6 @@ interface NbpResponse {
 /** Пакет без DOM-типів: глобальний fetch (браузер, Node 22) беремо через globalThis */
 const defaultFetch: FetchLike = (url) => (globalThis as unknown as { fetch: FetchLike }).fetch(url);
 
-const isIsoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
 const addDays = (iso: string, days: number) =>
   new Date(Date.parse(`${iso}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 

@@ -12,7 +12,13 @@ const app = result.ok ? initializeApp(result.config) : null;
 
 export const auth = app ? getAuth(app) : null;
 
-/** Офлайн-кеш у IndexedDB: дані читаються без мережі, запис синхронізується при поверненні */
+/**
+ * Офлайн-кеш у IndexedDB: дані читаються без мережі, запис синхронізується при поверненні.
+ * Необов'язкові поля документів (saleDate?, vat? тощо) можуть прийти як undefined: Firestore їх пропускає, а не падає.
+ */
 export const db = app
-  ? initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) })
+  ? initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      ignoreUndefinedProperties: true,
+    })
   : null;
