@@ -122,6 +122,11 @@ export interface YearSettings {
    * false — zdrowotna відлічується від доходу і базу для zdrowotnej не зменшує.
    */
   healthAsCost?: boolean;
+  /**
+   * Надвишка VAT, перенесена з грудня попереднього року в січень (P_39 січневої декларації), гроші.
+   * Не вказано — 0.
+   */
+  openingVatCarry?: number;
 }
 
 export interface YearInput {
@@ -308,9 +313,13 @@ export function calcYearFromSums(
   if (holiday !== null && !(Number.isInteger(holiday) && holiday >= 1 && holiday <= 12)) {
     throw new RangeError(`contributionHolidayMonth має бути місяцем 1..12, а не ${String(holiday)}`);
   }
+  const openingCarry = settings.openingVatCarry ?? 0;
+  if (!Number.isSafeInteger(openingCarry) || openingCarry < 0) {
+    throw new RangeError(`openingVatCarry має бути невід'ємною сумою в грошах, а не ${String(openingCarry)}`);
+  }
   const results: MonthResult[] = [];
 
-  let carry = 0;
+  let carry = openingCarry;
   let cumIncome = 0;
   let cumHealthDed = 0;
   let cumPit = 0;

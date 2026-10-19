@@ -118,6 +118,19 @@ describe('VAT', () => {
     expect(r[0].vatCarryOut).toBe(115_000);
     expect(r[1].vatDue).toBe(230_000 - 115_000);
   });
+  it('надвишка з грудня попереднього року переходить у січень', () => {
+    const settings = { ...empty().settings, openingVatCarry: 300_000 };
+    const r = calcYear(empty({ incomes: [{ month: 1, net: 1_000_000 }], settings }), cfg);
+    expect(r[0].vatCarryIn).toBe(300_000);
+    expect(r[0].vatDue).toBe(0);
+    expect(r[0].vatCarryOut).toBe(70_000);
+    expect(calcYear(empty(), cfg)[0].vatCarryIn).toBe(0);
+  });
+  it('початкова надвишка — невід’ємна сума в грошах', () => {
+    for (const openingVatCarry of [-1, 0.5, Number.NaN]) {
+      expect(() => calcYear(empty({ settings: { ...empty().settings, openingVatCarry } }), cfg)).toThrow(RangeError);
+    }
+  });
   it('import usług дає нульове сальдо VAT', () => {
     const r = calcYear(
       empty({
