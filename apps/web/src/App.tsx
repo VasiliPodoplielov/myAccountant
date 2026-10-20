@@ -1,28 +1,19 @@
-import { AppShell, Burger, Button, Group, NavLink, Text, Title } from '@mantine/core';
+import { AppShell, Burger, Button, Group, NavLink, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useAuth } from './auth/AuthContext';
+import { MonthPage } from './accounting/MonthPage';
+import { YearPage } from './accounting/YearPage';
 import { ImportPage } from './import/ImportPage';
 import { ReconciliationPage } from './reconciliation/ReconciliationPage';
 import { SettingsPage } from './settings/SettingsPage';
 import { Navigate, NavLink as RouterNavLink, Route, Routes } from 'react-router';
 
 const pages = [
-  { path: '/', label: 'Рік' },
+  { path: '/', label: 'Рік', element: <YearPage /> },
   { path: '/import', label: 'Імпорт JPK', element: <ImportPage /> },
   { path: '/reconciliation', label: 'Звірка', element: <ReconciliationPage /> },
   { path: '/settings', label: 'Налаштування', element: <SettingsPage /> },
 ];
-
-function Placeholder({ title }: { title: string }) {
-  return (
-    <>
-      <Title order={2}>{title}</Title>
-      <Text c="dimmed" mt="xs">
-        Тут поки порожньо.
-      </Text>
-    </>
-  );
-}
 
 export function App() {
   const [opened, { toggle, close }] = useDisclosure();
@@ -55,8 +46,9 @@ export function App() {
       <AppShell.Main>
         <Routes>
           {pages.map((page) => (
-            <Route key={page.path} path={page.path} element={page.element ?? <Placeholder title={page.label} />} />
+            <Route key={page.path} path={page.path} element={page.element} />
           ))}
+          <Route path="/month/:year/:month" element={<MonthPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell.Main>
