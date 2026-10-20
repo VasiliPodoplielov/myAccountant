@@ -5,3 +5,6 @@ export * from './document';
 export * from './kpir';
 export * from './vat';
 export * from './ledger';
+export * from './jpk';
+export * from './jpkImport';
+export * from './reference';

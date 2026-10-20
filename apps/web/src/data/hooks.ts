@@ -1,5 +1,5 @@
-import type { ForeignCurrency, LedgerDocument, YearSettings } from '@jdg/core';
-import { deleteDoc, doc, setDoc, writeBatch } from 'firebase/firestore';
+import type { ContractorRule, ForeignCurrency, LedgerDocument, MonthReference, YearSettings } from '@jdg/core';
+import { deleteDoc, deleteField, doc, setDoc, writeBatch, type Firestore, type WriteBatch } from 'firebase/firestore';
 import { useAuth } from '../auth/AuthContext';
 import { db } from '../firebase/app';
 import { paths } from '../firebase/paths';
@@ -16,6 +16,17 @@ function useOwnUid(): string | null {
 function requireDb() {
   if (!db) throw new Error('Firebase не налаштований');
   return db;
+}
+
+// ---------------------------------------------------------------- batches
+
+/** Пише операції пакетами: ліміт Firestore — 500 операцій на пакет */
+async function inBatches<T>(firestore: Firestore, items: readonly T[], op: (batch: WriteBatch, item: T) => void) {
+  for (let i = 0; i < items.length; i += 500) {
+    const batch = writeBatch(firestore);
+    for (const item of items.slice(i, i + 500)) op(batch, item);
+    await batch.commit();
+  }
 }
 
 // ---------------------------------------------------------------- settings/{year}
@@ -61,13 +72,98 @@ export function useFxRates(currency: ForeignCurrency): SnapshotState<Record<stri
 /** Дописує курси в кеш; merge, щоб EUR і USD того самого дня не затирали одне одного */
 export async function saveFxRates(uid: string, currency: ForeignCurrency, rates: Record<string, number>) {
   const firestore = requireDb();
-  const entries = Object.entries(rates);
-  // ліміт Firestore: 500 операцій на пакет
-  for (let i = 0; i < entries.length; i += 500) {
-    const batch = writeBatch(firestore);
-    for (const [date, mid] of entries.slice(i, i + 500)) {
-      batch.set(doc(firestore, paths.fxRate(uid, date).join('/')), { [currency]: mid }, { merge: true });
-    }
-    await batch.commit();
-  }
+  await inBatches(firestore, Object.entries(rates), (batch, [date, mid]) =>
+    batch.set(doc(firestore, paths.fxRate(uid, date).join('/')), { [currency]: mid }, { merge: true }),
+  );
+}
+
+// ---------------------------------------------------------------- vendorRules/{key}
+
+/** Правила контрагентів: ключ — NIP або назва (id документа декодується назад) */
+export function useVendorRules(): SnapshotState<Record<string, ContractorRule>> {
+  const uid = useOwnUid();
+  const state = useCollectionData<ContractorRule>(uid ? paths.vendorRulesCollection(uid) : null);
+  return useMemo(
+    () =>
+      state.status === 'ready'
+        ? {
+            status: 'ready',
+            data: Object.fromEntries(state.data.map(({ id, ...rule }) => [decodeURIComponent(id), rule])),
+          }
+        : state,
+    [state],
+  );
+}
+
+// ---------------------------------------------------------------- reference/{yyyy-mm}
+
+/** Еталон бухгалтера за місяці: 'YYYY-MM' → еталон */
+export function useReferences(): SnapshotState<Record<string, MonthReference>> {
+  const uid = useOwnUid();
+  const state = useCollectionData<MonthReference>(uid ? paths.referenceCollection(uid) : null);
+  return useMemo(
+    () =>
+      state.status === 'ready'
+        ? { status: 'ready', data: Object.fromEntries(state.data.map(({ id, ...ref }) => [id, ref])) }
+        : state,
+    [state],
+  );
+}
+
+type ReferencePart = keyof Omit<MonthReference, 'notes'> | 'notes';
+
+/**
+ * Записує лише вказані частини еталона, решту лишає: JPK не затирає внесене вручну з KPiR і DRA.
+ * Частина без значення видаляється.
+ */
+export function saveReferenceParts(
+  uid: string,
+  period: string,
+  parts: Partial<MonthReference>,
+  fields: readonly ReferencePart[],
+): Promise<void> {
+  const data = Object.fromEntries(fields.map((f) => [f, parts[f] ?? deleteField()]));
+  return setDoc(doc(requireDb(), paths.reference(uid, period).join('/')), data, { mergeFields: [...fields] });
+}
+
+// ---------------------------------------------------------------- JPK import
+
+export interface ImportWrite {
+  rules: Record<string, ContractorRule>;
+  documents: (LedgerDocument & { id: string })[];
+  /** Документи попереднього імпорту, яких у нових файлах уже немає */
+  remove: string[];
+  references: Record<string, Pick<MonthReference, 'vat' | 'sales' | 'purchases'>>;
+}
+
+/** Імпорт JPK: правила контрагентів, документи (id стабільні, тож повтор перезаписує), еталон з JPK */
+export async function saveJpkImport(uid: string, write: ImportWrite): Promise<void> {
+  const firestore = requireDb();
+  const ops: ((batch: WriteBatch) => void)[] = [
+    ...Object.entries(write.rules).map(
+      ([key, rule]) =>
+        (b: WriteBatch) =>
+          b.set(doc(firestore, paths.vendorRule(uid, key).join('/')), rule),
+    ),
+    ...write.documents.map(
+      ({ id, ...data }) =>
+        (b: WriteBatch) =>
+          b.set(doc(firestore, paths.document(uid, id).join('/')), data),
+    ),
+    ...write.remove.map((id) => (b: WriteBatch) => b.delete(doc(firestore, paths.document(uid, id).join('/')))),
+    ...Object.entries(write.references).map(
+      ([period, ref]) =>
+        (b: WriteBatch) =>
+          b.set(
+            doc(firestore, paths.reference(uid, period).join('/')),
+            {
+              vat: ref.vat ?? deleteField(),
+              sales: ref.sales ?? deleteField(),
+              purchases: ref.purchases ?? deleteField(),
+            },
+            { mergeFields: ['vat', 'sales', 'purchases'] },
+          ),
+    ),
+  ];
+  await inBatches(firestore, ops, (batch, op) => op(batch));
 }

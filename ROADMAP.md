@@ -262,8 +262,9 @@
 
 ```
 users/{uid}
-  settings/{year}          # ставки року, chorobowe, дохід і składki за грудень попереднього року,
-                           # початкові залишки (надвишка VAT), режим: тіньовий | основний
+  settings/{year}          # YearSettings: chorobowe, дохід і składki за грудень попереднього року,
+                           # contributionHolidayMonth, healthAsCost, openingVatCarry (надвишка VAT
+                           # на 1 січня); пізніше — режим: тіньовий | основний
   documents/{id}           # первинний документ (LedgerDocument у packages/core):
                            #   kind: income | cost | internal, number, issueDate, description?,
                            #   saleDate?, receivedDate?, pitDate?, vatDate? (без pitDate і vatDate
@@ -278,10 +279,12 @@ users/{uid}
   periods/{yyyy-mm}        # стан місяця: відкритий | закритий; знімок сум після закриття
   filings/{id}             # звітність: тип (JPK_V7M, DRA, JPK_PKPIR, JPK_ST, PIT-36L), період,
                            #   статус, XML, номер підтвердження, UPO
-  reference/{yyyy-mm}      # еталон бухгалтера за місяць: VAT, zaliczka, składki, підсумки KPiR;
-                           #   пояснення різниць
+  reference/{yyyy-mm}      # еталон бухгалтера за місяць (MonthReference): vat, sales, purchases —
+                           #   з поданої JPK_V7M; kpir {col9, col10, col15}, zus {social, fp, health},
+                           #   pitAdvance — вручну з KPiR, DRA, розрахунку; notes: показник → пояснення
   ksefInbox/{ksefNumber}   # сирі розібрані фактури з KSeF, status: new | accepted | ignored
-  vendorRules/{nip}        # NIP → категорія за замовчуванням
+  vendorRules/{key}        # правило контрагента (ключ — NIP, без нього назва; у id закодований):
+                           #   category? для витрат, periodicSettlement? для продажу
   fxRates/{date}           # кеш курсів NBP
 meta/allowlist             # email власника
 ```
@@ -389,6 +392,13 @@ meta/allowlist             # email власника
 #### Етап 6. Імпорт історії та еталон бухгалтера
 
 **Модель:** Opus 5.5, effort high. Розбір реальних JPK і пошук причин розбіжностей.
+
+**Стан (2026-10-19):** код у PR з гілки `feature/jpk-import`. Лишилося власнику: зберегти налаштування 2026 (без них звірка рахує ZUS і zdrowotną без доходу за грудень і wakacji), завантажити всі файли 2026, внести еталон KPiR і DRA, пояснити відомі різниці (вхід через Google автотестами не перевірити).
+
+- `packages/core/src`: `jpk.ts` — розбір JPK_V7M (2) і (3), контрольні суми; `jpkImport.ts` — документи з рядків JPK: категорія з `vendorRules`, повні netto і VAT при відліку 50% відновлюються (якщо варіантів кілька і вони дають різний koszt, вибір за сумою з KPiR, примітка `ambiguousAmount`), місяць VAT — як у поданому файлі (примітка `vatPeriod`), стабільні id `jpk-…`, тож повторний імпорт перезаписує; `reference.ts` — еталон місяця, показники обліку (`yearFigures`), звіт різниць (`compareMonth`, `yearReport`). `YearSettings.openingVatCarry` — надвишка VAT на 1 січня.
+- `apps/web/src`: екрани «Імпорт JPK» (`/import`: вибір файлів, категорії постачальників, розрахункові періоди клієнтів, вибір неоднозначних сум, запис документів, правил і еталона з JPK; корекція видаляє документи, яких у файлі вже немає), «Звірка» (`/reconciliation`: по кожному місяцю облік, еталон, різниця, пояснення; ручне внесення KPiR, DRA, zaliczki), «Налаштування» (`/settings`: налаштування року й початкові залишки).
+- Не імпортується з JPK і вноситься вручну: import usług (K_27–K_30), основні засоби (K_40, K_41), корекції naliczonego (K_44–K_47), особливі документи (RO, WEW, FP, MK, VAT_RR). У файлах 2026 таких немає.
+- Перевірено локально на справжніх файлах з `refs/` (скрипт поза репозиторієм): усі 9 JPK розбираються, реєстри VAT і декларація відтворюються до гроша. Категорії за записами KPiR бухгалтера (опис і сума): авто мішане — пальне, шини, сервіс і przegląd авто; 100% — бухгалтер, юристи, wyposażenie biura, artykuły pomocnicze. З еталоном KPiR і DRA лишаються лише відомі різниці: 1–2 гроші в січні й березні (вибір варіанта суми авто), Anthropic і Cursor з квітня (немає в JPK) і їхній наслідок у zdrowotnej травня–вересня, zdrowotna за лютий у DRA.
 
 - Файли бухгалтера вже лежать у `refs/` (у `.gitignore`). Розбір JPK і KPiR з PDF прототиповано під час звірки етапу 4.
 - Парсер JPK_V7M: з реєстрів продажу й закупівлі створюються документи. Підтримати версії, які є у файлах: (2) для січня 2026 і раніше, (3) з лютого 2026.

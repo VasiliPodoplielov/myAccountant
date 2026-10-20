@@ -1,11 +1,16 @@
 import { AppShell, Burger, Button, Group, NavLink, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useAuth } from './auth/AuthContext';
+import { ImportPage } from './import/ImportPage';
+import { ReconciliationPage } from './reconciliation/ReconciliationPage';
+import { SettingsPage } from './settings/SettingsPage';
 import { Navigate, NavLink as RouterNavLink, Route, Routes } from 'react-router';
 
 const pages = [
   { path: '/', label: 'Рік' },
-  { path: '/settings', label: 'Налаштування' },
+  { path: '/import', label: 'Імпорт JPK', element: <ImportPage /> },
+  { path: '/reconciliation', label: 'Звірка', element: <ReconciliationPage /> },
+  { path: '/settings', label: 'Налаштування', element: <SettingsPage /> },
 ];
 
 function Placeholder({ title }: { title: string }) {
@@ -50,7 +55,7 @@ export function App() {
       <AppShell.Main>
         <Routes>
           {pages.map((page) => (
-            <Route key={page.path} path={page.path} element={<Placeholder title={page.label} />} />
+            <Route key={page.path} path={page.path} element={page.element ?? <Placeholder title={page.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
