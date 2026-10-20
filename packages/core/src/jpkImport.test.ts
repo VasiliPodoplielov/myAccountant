@@ -3,7 +3,13 @@ import { documentIssues } from './document';
 import { january2026Jpk, jpkXml } from './fixtures/jpk';
 import { january2026 } from './fixtures/month-2026-01';
 import { parseJpkV7M } from './jpk';
-import { documentsFromJpk, jpkDocumentId, kpirHintsFromDocuments, type ContractorRules } from './jpkImport';
+import {
+  documentsFromJpk,
+  jpkDocumentId,
+  kpirHintsFromDocuments,
+  type CategoryOverrides,
+  type ContractorRules,
+} from './jpkImport';
 import { kpirContributions, kpirFromDocuments, kpirTotals } from './kpir';
 import { calcYearFromDocuments } from './ledger';
 import { TAX_CONFIG } from './tax';
@@ -216,6 +222,84 @@ describe('витрати з JPK', () => {
     const r = importMarch({ purchases: [purchase(), purchase()] }, { '2222222222': { category: 'other' } });
     expect(r.documents).toHaveLength(1);
     expect(r.issues).toMatchObject([{ lp: 2, code: 'duplicate' }]);
+  });
+});
+
+describe('категорія окремого документа', () => {
+  // Серпень 2026 (дані вигадані, суми — як у справжньому випадку): на АЗС, для якої правило «авто»,
+  // одна фактура — дрібні товари. Бухгалтер вніс її як «Інше» з повним відліком, тож у JPK повні суми.
+  const fuelRule: ContractorRules = { '2222222222': { category: 'carMixed' } };
+  const august = parseJpkV7M(
+    jpkXml({
+      month: 8,
+      purchases: [
+        purchase({ DowodZakupu: 'F 1/08/26', DataZakupu: '2026-08-10', K_42: '0.81', K_43: '0.19' }),
+        purchase({ DowodZakupu: 'F 2/08/26', DataZakupu: '2026-08-10', K_42: '50.00', K_43: '11.50' }),
+      ],
+    }),
+  );
+  const small = jpkDocumentId('cost', '2222222222', 'F 1/08/26');
+  const fuel = jpkDocumentId('cost', '2222222222', 'F 2/08/26');
+  const overrides: CategoryOverrides = { [small]: 'other' };
+  const col15 = (r: ReturnType<typeof documentsFromJpk>) => kpirTotals(kpirFromDocuments(r.documents, 2026), 8).col15;
+  const categories = (r: ReturnType<typeof documentsFromJpk>) =>
+    Object.fromEntries(r.documents.map((d) => [d.id, d.kind === 'cost' && d.category]));
+
+  it('перевизначення має пріоритет над правилом контрагента, решта документів — за правилом', () => {
+    const r = documentsFromJpk(august, fuelRule, {}, overrides);
+    expect(categories(r)).toEqual({ [small]: 'other', [fuel]: 'carMixed' });
+    const doc = r.documents.find((d) => d.id === small)!;
+    expect(doc.kind === 'cost' && doc.lines).toEqual([{ net: 81, vatRate: '23', vat: 19 }]);
+    expect(r.notes.map((n) => n.documentId)).toEqual([fuel]);
+    expect(r.issues).toEqual([]);
+  });
+  it('без перевизначення документ іде як авто, і koszt у KPiR більший на 0,55', () => {
+    const asCar = documentsFromJpk(august, fuelRule);
+    expect(categories(asCar)[small]).toBe('carMixed');
+    expect(col15(asCar) - col15(documentsFromJpk(august, fuelRule, {}, overrides))).toBe(55);
+  });
+  it('реєстр VAT однаковий: категорія впливає лише на koszt', () => {
+    const asOther = vatRegisters(documentsFromJpk(august, fuelRule, {}, overrides).documents, 2026, 8);
+    expect(vatTotals(asOther.purchases)).toEqual({ K_42: 5_081, K_43: 1_169 });
+  });
+  it('повторний імпорт з тими самими перевизначеннями дає ті самі документи', () => {
+    const first = documentsFromJpk(august, fuelRule, {}, overrides);
+    const again = documentsFromJpk(
+      august,
+      fuelRule,
+      { kpirAmounts: kpirHintsFromDocuments(first.documents) },
+      overrides,
+    );
+    expect(again.documents).toEqual(first.documents);
+  });
+  it('перевизначення без правила контрагента: документ є, але решта рядків контрагента просить категорію', () => {
+    const r = documentsFromJpk(august, {}, {}, overrides);
+    expect(r.documents.map((d) => d.id)).toEqual([small]);
+    expect(r.issues.map((i) => [i.number, i.code])).toEqual([['F 2/08/26', 'category']]);
+    expect(r.missingRules).toEqual([{ key: '2222222222', name: 'Dostawca' }]);
+  });
+  it('перевизначення на import usług не імпортується, як і правило', () => {
+    const r = documentsFromJpk(august, fuelRule, {}, { [small]: 'importServices' });
+    expect(r.issues).toMatchObject([{ number: 'F 1/08/26', code: 'unsupportedField', detail: 'import usług' }]);
+  });
+  it('перевизначення для чужого id чи з невідомою категорією нічого не змінює', () => {
+    const r = documentsFromJpk(august, fuelRule, {}, { 'jpk-cost-x-y': 'other' });
+    expect(categories(r)).toEqual({ [small]: 'carMixed', [fuel]: 'carMixed' });
+    const unknown = { [small]: 'car', [fuel]: 'toString' } as unknown as CategoryOverrides;
+    expect(categories(documentsFromJpk(august, fuelRule, {}, unknown))).toEqual({
+      [small]: 'carMixed',
+      [fuel]: 'carMixed',
+    });
+  });
+  it('підказка з документа, чия категорія зміниться, не береться', () => {
+    const asCar = documentsFromJpk(august, fuelRule).documents;
+    expect(Object.keys(kpirHintsFromDocuments(asCar))).toEqual([small, fuel]);
+    expect(Object.keys(kpirHintsFromDocuments(asCar, fuelRule))).toEqual([small, fuel]);
+    expect(Object.keys(kpirHintsFromDocuments(asCar, fuelRule, overrides))).toEqual([fuel]);
+    // і навпаки: перевизначення прибрали — документ «Інше» знову стає авто
+    const asOther = documentsFromJpk(august, fuelRule, {}, overrides).documents;
+    expect(Object.keys(kpirHintsFromDocuments(asOther, fuelRule, overrides))).toEqual([small, fuel]);
+    expect(Object.keys(kpirHintsFromDocuments(asOther, fuelRule))).toEqual([fuel]);
   });
 });
 

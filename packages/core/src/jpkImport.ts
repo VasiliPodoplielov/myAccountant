@@ -3,7 +3,8 @@
  * виводить ті самі реєстри VAT і записи KPiR.
  *
  * Чого в JPK немає і звідки це береться:
- * - категорії витрати: з правил контрагентів (vendorRules, NIP → категорія);
+ * - категорії витрати: з перевизначення для документа (categoryOverrides), інакше з правил
+ *   контрагентів (vendorRules, NIP → категорія);
  * - повних сум витрати з частковим відліком: JPK дає K_42 і K_43 у частці відліку (для авто 50%),
  *   повні netto і VAT відновлюються так, щоб дати ті самі K_42, K_43; якщо варіантів кілька і вони
  *   дають різний koszt у KPiR, вибір іде за сумою з KPiR бухгалтера (подсказка kpirAmounts);
@@ -39,12 +40,32 @@ export interface ContractorRule {
 
 export type ContractorRules = Record<string, ContractorRule>;
 
+/**
+ * Категорія окремого документа (categoryOverrides/{id}): id документа з JPK → категорія. Має пріоритет
+ * над правилом контрагента, бо один контрагент може продавати різне (пальне й дрібні товари на АЗС).
+ */
+export type CategoryOverrides = Record<string, CostCategory>;
+
 /** Ключ правила: NIP, а для контрагента без номера — назва */
 export const contractorKey = (row: Pick<JpkSalesRow, 'contractorTaxId' | 'contractorName'>) =>
   row.contractorTaxId ?? row.contractorName.trim();
 
+/**
+ * Категорія витрати з JPK: перевизначення документа, інакше правило контрагента. Невідоме значення
+ * перевизначення (дані з Firestore правилами не перевіряються) не діє.
+ */
+export function importCategory(
+  id: string,
+  key: string,
+  rules: ContractorRules,
+  overrides: CategoryOverrides,
+): CostCategory | undefined {
+  const override = overrides[id];
+  return override && Object.hasOwn(CATEGORY_RULES, override) ? override : rules[key]?.category;
+}
+
 export type JpkImportIssueCode =
-  /** Для витрати немає категорії в правилах контрагентів */
+  /** Для витрати немає ні категорії в правилах контрагентів, ні перевизначення документа */
   | 'category'
   /** Поле, якого облік поки не веде: товари, основні засоби, корекції, import usług тощо */
   | 'unsupportedField'
@@ -167,10 +188,20 @@ function preimages(k: number, share: number): number[] {
 
 type RowIssue = { code: JpkImportIssueCode; detail?: string };
 
+/** Поля, яких облік не веде, і особливий тип документа: такий рядок не стає документом за жодної категорії */
+function unsupportedRow(row: JpkSalesRow | JpkPurchaseRow, supported: ReadonlySet<string>): RowIssue | undefined {
+  const unsupported = Object.keys(row.fields).filter((f) => !supported.has(f));
+  if (unsupported.length > 0) return { code: 'unsupportedField', detail: unsupported.join(', ') };
+  if (row.documentType) return { code: 'documentType', detail: row.documentType };
+  return undefined;
+}
+
+/** Рядок закупівлі може стати документом, якщо дати йому категорію (крім import usług) */
+export const importablePurchase = (row: JpkPurchaseRow) => !unsupportedRow(row, PURCHASE_SUPPORTED);
+
 function saleDocument(row: JpkSalesRow, rules: ContractorRules): { doc?: IncomeDocument; issue?: RowIssue } {
-  const unsupported = Object.keys(row.fields).filter((f) => !SALES_SUPPORTED.has(f));
-  if (unsupported.length > 0) return { issue: { code: 'unsupportedField', detail: unsupported.join(', ') } };
-  if (row.documentType) return { issue: { code: 'documentType', detail: row.documentType } };
+  const unsupported = unsupportedRow(row, SALES_SUPPORTED);
+  if (unsupported) return { issue: unsupported };
 
   const lines: DocumentLine[] = [];
   for (const [baseField, vatField, rate] of SALES_LINES) {
@@ -217,9 +248,8 @@ function purchaseDocument(
   mismatch?: boolean;
   issue?: RowIssue;
 } {
-  const unsupported = Object.keys(row.fields).filter((f) => !PURCHASE_SUPPORTED.has(f));
-  if (unsupported.length > 0) return { issue: { code: 'unsupportedField', detail: unsupported.join(', ') } };
-  if (row.documentType) return { issue: { code: 'documentType', detail: row.documentType } };
+  const unsupported = unsupportedRow(row, PURCHASE_SUPPORTED);
+  if (unsupported) return { issue: unsupported };
 
   const rule = CATEGORY_RULES[category];
   if (rule.reverseCharge) return { issue: { code: 'unsupportedField', detail: 'import usług' } };
@@ -273,9 +303,15 @@ function purchaseDocument(
 
 /**
  * Документи з файла JPK_V7M. Рядки, які не стали документами, — в issues; документи, які варто
- * перевірити, — в notes. Повторний виклик з тими самими даними дає ті самі id.
+ * перевірити, — в notes. Повторний виклик з тими самими даними дає ті самі id, тож перевизначення
+ * категорії, записане за id, діє й при повторному імпорті.
  */
-export function documentsFromJpk(jpk: JpkV7M, rules: ContractorRules = {}, hints: JpkImportHints = {}): JpkImport {
+export function documentsFromJpk(
+  jpk: JpkV7M,
+  rules: ContractorRules = {},
+  hints: JpkImportHints = {},
+  overrides: CategoryOverrides = {},
+): JpkImport {
   const period = jpkPeriod(jpk);
   const result: JpkImport = { period, documents: [], issues: [], notes: [], missingRules: [] };
   const ids = new Set<string>();
@@ -313,13 +349,13 @@ export function documentsFromJpk(jpk: JpkV7M, rules: ContractorRules = {}, hints
   for (const row of jpk.purchases) {
     const head = { register: 'purchases' as const, lp: row.lp, number: row.number, contractorName: row.contractorName };
     const key = contractorKey(row);
-    const category = rules[key]?.category;
+    const id = jpkDocumentId('cost', key, row.number);
+    const category = importCategory(id, key, rules, overrides);
     if (!category) {
       result.issues.push({ ...head, code: 'category' });
       if (!result.missingRules.some((m) => m.key === key)) result.missingRules.push({ key, name: row.contractorName });
       continue;
     }
-    const id = jpkDocumentId('cost', key, row.number);
     const built = purchaseDocument(row, category, hints.kpirAmounts?.[id]);
     if (!built.doc) {
       result.issues.push({ ...head, ...built.issue! });
@@ -346,11 +382,21 @@ export function documentsFromJpk(jpk: JpkV7M, rules: ContractorRules = {}, hints
 /**
  * Підказки для повторного імпорту: koszt уже збережених документів з JPK. Так вибір варіанта сум,
  * зроблений раніше, не губиться, коли той самий файл (чи його корекцію) імпортують знову.
+ * З правилами (і перевизначеннями) документ, чия категорія при новому імпорті зміниться, підказки не
+ * дає: його koszt рахувався за іншою часткою і з варіантами нової категорії не порівнюється.
  */
-export function kpirHintsFromDocuments(docs: readonly Stored<LedgerDocument>[]): Record<string, number> {
+export function kpirHintsFromDocuments(
+  docs: readonly Stored<LedgerDocument>[],
+  rules?: ContractorRules,
+  overrides: CategoryOverrides = {},
+): Record<string, number> {
   const hints: Record<string, number> = {};
   for (const doc of docs) {
     if (doc.kind !== 'cost' || !doc.id?.startsWith('jpk-cost-')) continue;
+    if (rules) {
+      const key = contractorKey({ contractorTaxId: doc.contractor.nip, contractorName: doc.contractor.name });
+      if (importCategory(doc.id, key, rules, overrides) !== doc.category) continue;
+    }
     const value = valueDocument(doc);
     if (value) hints[doc.id] = value.pitAmount;
   }

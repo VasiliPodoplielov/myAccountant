@@ -16,4 +16,7 @@ export const paths = {
   vendorRulesCollection: (uid: string): Path => [...userRoot(uid), 'vendorRules'],
   /** Правило контрагента; ключ (NIP або назва) кодується, бо '/' в id документа заборонений */
   vendorRule: (uid: string, key: string): Path => [...userRoot(uid), 'vendorRules', encodeURIComponent(key)],
+  categoryOverridesCollection: (uid: string): Path => [...userRoot(uid), 'categoryOverrides'],
+  /** Категорія окремого документа; id той самий, що в documents (`jpk-…` уже без '/') */
+  categoryOverride: (uid: string, documentId: string): Path => [...userRoot(uid), 'categoryOverrides', documentId],
 };

@@ -55,7 +55,17 @@ function as(
     .firestore();
 }
 
-const OWNED = ['settings', 'documents', 'fixedAssets', 'periods', 'filings', 'reference', 'vendorRules', 'fxRates'];
+const OWNED = [
+  'settings',
+  'documents',
+  'fixedAssets',
+  'periods',
+  'filings',
+  'reference',
+  'vendorRules',
+  'categoryOverrides',
+  'fxRates',
+];
 
 describe('власник з allowlist', () => {
   it.each(OWNED)('читає й пише %s', async (collection) => {

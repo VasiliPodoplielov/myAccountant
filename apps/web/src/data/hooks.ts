@@ -1,4 +1,12 @@
-import type { ContractorRule, ForeignCurrency, LedgerDocument, MonthReference, YearSettings } from '@jdg/core';
+import type {
+  CategoryOverrides,
+  ContractorRule,
+  CostCategory,
+  ForeignCurrency,
+  LedgerDocument,
+  MonthReference,
+  YearSettings,
+} from '@jdg/core';
 import { deleteDoc, deleteField, doc, setDoc, writeBatch, type Firestore, type WriteBatch } from 'firebase/firestore';
 import { useAuth } from '../auth/AuthContext';
 import { db } from '../firebase/app';
@@ -95,6 +103,21 @@ export function useVendorRules(): SnapshotState<Record<string, ContractorRule>> 
   );
 }
 
+// ---------------------------------------------------------------- categoryOverrides/{documentId}
+
+/** Категорії окремих документів: id документа → категорія (має пріоритет над правилом контрагента) */
+export function useCategoryOverrides(): SnapshotState<CategoryOverrides> {
+  const uid = useOwnUid();
+  const state = useCollectionData<{ category: CostCategory }>(uid ? paths.categoryOverridesCollection(uid) : null);
+  return useMemo(
+    () =>
+      state.status === 'ready'
+        ? { status: 'ready', data: Object.fromEntries(state.data.map(({ id, category }) => [id, category])) }
+        : state,
+    [state],
+  );
+}
+
 // ---------------------------------------------------------------- reference/{yyyy-mm}
 
 /** Еталон бухгалтера за місяці: 'YYYY-MM' → еталон */
@@ -130,13 +153,18 @@ export function saveReferenceParts(
 
 export interface ImportWrite {
   rules: Record<string, ContractorRule>;
+  /** Змінені категорії окремих документів; null — перевизначення прибрано, діє правило контрагента */
+  overrides: Record<string, CostCategory | null>;
   documents: (LedgerDocument & { id: string })[];
   /** Документи попереднього імпорту, яких у нових файлах уже немає */
   remove: string[];
   references: Record<string, Pick<MonthReference, 'vat' | 'sales' | 'purchases'>>;
 }
 
-/** Імпорт JPK: правила контрагентів, документи (id стабільні, тож повтор перезаписує), еталон з JPK */
+/**
+ * Імпорт JPK: правила контрагентів, категорії окремих документів, документи (id стабільні, тож повтор
+ * перезаписує), еталон з JPK
+ */
 export async function saveJpkImport(uid: string, write: ImportWrite): Promise<void> {
   const firestore = requireDb();
   const ops: ((batch: WriteBatch) => void)[] = [
@@ -145,6 +173,11 @@ export async function saveJpkImport(uid: string, write: ImportWrite): Promise<vo
         (b: WriteBatch) =>
           b.set(doc(firestore, paths.vendorRule(uid, key).join('/')), rule),
     ),
+    ...Object.entries(write.overrides).map(([id, category]) => (b: WriteBatch) => {
+      const ref = doc(firestore, paths.categoryOverride(uid, id).join('/'));
+      if (category) b.set(ref, { category });
+      else b.delete(ref);
+    }),
     ...write.documents.map(
       ({ id, ...data }) =>
         (b: WriteBatch) =>

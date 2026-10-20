@@ -23,7 +23,7 @@ service cloud.firestore {
     function isOwnedCollection(name) {
       return name in [
         'settings', 'documents', 'fixedAssets', 'periods',
-        'filings', 'reference', 'vendorRules', 'fxRates'
+        'filings', 'reference', 'vendorRules', 'categoryOverrides', 'fxRates'
       ];
     }
 
