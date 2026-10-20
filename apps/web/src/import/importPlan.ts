@@ -1,11 +1,16 @@
 import {
   documentDates,
   documentsFromJpk,
+  importablePurchase,
+  importCategory,
   jpkCtrlIssues,
+  jpkDocumentId,
   parseJpkV7M,
   referenceFromJpk,
   contractorKey,
+  type CategoryOverrides,
   type ContractorRules,
+  type CostCategory,
   type JpkCtrlIssue,
   type JpkImport,
   type JpkV7M,
@@ -26,6 +31,23 @@ export function parseFile(name: string, xml: string): ParsedFile {
   }
 }
 
+/** Рядок закупівлі з файла: для нього можна вибрати категорію окремо від правила контрагента */
+export interface PurchaseRowPlan {
+  /** Id документа, який дасть рядок; за ним записується перевизначення */
+  id: string;
+  /** Ключ правила контрагента */
+  key: string;
+  number: string;
+  contractorName: string;
+  /** Суми з JPK (K_42, K_43): при частковому відліку це частка, а не повні суми */
+  net: number;
+  vat: number;
+  /** Категорія за правилом контрагента */
+  ruleCategory?: CostCategory;
+  /** Категорія, вибрана для цього документа */
+  override?: CostCategory;
+}
+
 export interface FilePlan {
   name: string;
   result: JpkImport;
@@ -34,6 +56,7 @@ export interface FilePlan {
   variant: 2 | 3;
   /** Документи цього періоду з попереднього імпорту, яких у файлі вже немає: видаляються */
   stale: string[];
+  purchases: PurchaseRowPlan[];
 }
 
 export interface ImportPlan {
@@ -69,15 +92,42 @@ export function staleImported(
     .map((d) => d.id);
 }
 
+/**
+ * Рядки закупівлі, яким можна вибрати категорію: без полів, яких облік не веде, і без особливих
+ * документів; той самий документ двічі — один рядок.
+ */
+function purchaseRows(jpk: JpkV7M, rules: ContractorRules, overrides: CategoryOverrides): PurchaseRowPlan[] {
+  const rows = new Map<string, PurchaseRowPlan>();
+  for (const row of jpk.purchases.filter(importablePurchase)) {
+    const key = contractorKey(row);
+    const id = jpkDocumentId('cost', key, row.number);
+    if (rows.has(id)) continue;
+    const plan: PurchaseRowPlan = {
+      id,
+      key,
+      number: row.number,
+      contractorName: row.contractorName,
+      net: row.fields.K_42 ?? 0,
+      vat: row.fields.K_43 ?? 0,
+    };
+    if (rules[key]?.category) plan.ruleCategory = rules[key].category;
+    const override = importCategory(id, key, {}, overrides);
+    if (override) plan.override = override;
+    rows.set(id, plan);
+  }
+  return [...rows.values()];
+}
+
 export function buildImportPlan(
   parsed: readonly ParsedFile[],
   rules: ContractorRules,
   hints: Record<string, number>,
   existing: readonly (LedgerDocument & { id: string })[],
+  overrides: CategoryOverrides = {},
 ): ImportPlan {
   const ok = parsed.filter((f) => f.ok);
   const files = ok.map((f): FilePlan => {
-    const result = documentsFromJpk(f.jpk, rules, { kpirAmounts: hints });
+    const result = documentsFromJpk(f.jpk, rules, { kpirAmounts: hints }, overrides);
     return {
       name: f.name,
       result,
@@ -85,6 +135,7 @@ export function buildImportPlan(
       correction: f.jpk.correction,
       variant: f.jpk.variant,
       stale: staleImported(existing, result.period, new Set(result.documents.map((d) => d.id))),
+      purchases: purchaseRows(f.jpk, rules, overrides),
     };
   });
 

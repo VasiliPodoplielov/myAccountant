@@ -1,5 +1,6 @@
 import {
   kpirHintsFromDocuments,
+  type CategoryOverrides,
   type ContractorRule,
   type ContractorRules,
   type CostCategory,
@@ -14,6 +15,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   FileInput,
   Group,
   List,
@@ -27,7 +29,7 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
-import { saveJpkImport, useDocuments, useVendorRules } from '../data/hooks';
+import { saveJpkImport, useCategoryOverrides, useDocuments, useVendorRules } from '../data/hooks';
 import { formatPln } from '../format';
 import { buildImportPlan, parseFile, type FilePlan, type ParsedFile } from './importPlan';
 
@@ -37,6 +39,13 @@ const CATEGORY_OPTIONS: { value: CostCategory; label: string }[] = [
   { value: 'office', label: 'Офіс (100%)' },
   { value: 'other', label: 'Інше (100%)' },
 ];
+
+const CATEGORY_LABEL = Object.fromEntries(CATEGORY_OPTIONS.map((o) => [o.value, o.label])) as Partial<
+  Record<CostCategory, string>
+>;
+
+/** Значення вибору «як у правилі контрагента»: перевизначення документа немає */
+const BY_RULE = 'rule';
 
 const ISSUE_TEXT: Record<JpkImportIssueCode, string> = {
   category: 'немає категорії контрагента',
@@ -87,14 +96,86 @@ function NoteRow({ note, value, onChoose }: { note: JpkImportNote; value?: numbe
   );
 }
 
+function PurchaseCategories({
+  file,
+  onCategory,
+}: {
+  file: FilePlan;
+  onCategory: (id: string, category: CostCategory | null) => void;
+}) {
+  const overridden = file.purchases.filter((p) => p.override).length;
+  const [open, setOpen] = useState(overridden > 0);
+  return (
+    <Stack gap={4}>
+      <Group gap="xs">
+        <Button variant="subtle" size="compact-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? 'Сховати' : 'Показати'} категорії документів закупівлі ({file.purchases.length})
+        </Button>
+        {overridden > 0 && <Badge variant="light">окремо: {overridden}</Badge>}
+      </Group>
+      <Collapse expanded={open}>
+        <Text size="xs" c="dimmed" mb={4}>
+          Категорію окремого документа беруть, коли контрагент продав не те, що зазвичай (наприклад, на АЗС — не
+          пальне). Правило контрагента не змінюється; вибір зберігається й діє при повторному імпорті. Суми — як у JPK:
+          для авто там половина netto і VAT.
+        </Text>
+        <Table.ScrollContainer minWidth={560}>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Документ</Table.Th>
+                <Table.Th>Постачальник</Table.Th>
+                <Table.Th ta="right">K_42 / K_43</Table.Th>
+                <Table.Th>Категорія</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {file.purchases.map((p) => (
+                <Table.Tr key={p.id}>
+                  <Table.Td>{p.number}</Table.Td>
+                  <Table.Td>{p.contractorName}</Table.Td>
+                  <Table.Td ta="right" style={{ whiteSpace: 'nowrap' }}>
+                    {formatPln(p.net)} / {formatPln(p.vat)}
+                  </Table.Td>
+                  <Table.Td>
+                    <Select
+                      size="xs"
+                      aria-label={`Категорія документа ${p.number}`}
+                      data={[
+                        {
+                          value: BY_RULE,
+                          label: `Як у постачальника: ${
+                            p.ruleCategory ? (CATEGORY_LABEL[p.ruleCategory] ?? p.ruleCategory) : 'не вибрано'
+                          }`,
+                        },
+                        ...CATEGORY_OPTIONS,
+                      ]}
+                      value={p.override ?? BY_RULE}
+                      onChange={(v) => v && onCategory(p.id, v === BY_RULE ? null : (v as CostCategory))}
+                      allowDeselect={false}
+                      w={280}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      </Collapse>
+    </Stack>
+  );
+}
+
 function FileCard({
   file,
   choices,
   onChoose,
+  onCategory,
 }: {
   file: FilePlan;
   choices: Record<string, number>;
   onChoose: (id: string, v: number) => void;
+  onCategory: (id: string, category: CostCategory | null) => void;
 }) {
   const { result } = file;
   return (
@@ -143,6 +224,7 @@ function FileCard({
             ))}
           </List>
         )}
+        {file.purchases.length > 0 && <PurchaseCategories file={file} onCategory={onCategory} />}
       </Stack>
     </Card>
   );
@@ -156,8 +238,11 @@ export function ImportPage() {
   const uid = state.status === 'signedIn' ? state.user.uid : null;
   const docsState = useDocuments();
   const rulesState = useVendorRules();
+  const overridesState = useCategoryOverrides();
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [ruleEdits, setRuleEdits] = useState<ContractorRules>({});
+  /** Змінені категорії документів; null — повернути до правила контрагента */
+  const [overrideEdits, setOverrideEdits] = useState<Record<string, CostCategory | null>>({});
   const [choices, setChoices] = useState<Record<string, number>>({});
   const [save, setSave] = useState<SaveState>({ kind: 'idle' });
 
@@ -168,16 +253,54 @@ export function ImportPage() {
     for (const [key, edit] of Object.entries(ruleEdits)) merged[key] = { ...merged[key], ...edit };
     return merged;
   }, [savedRules, ruleEdits]);
-  const hints = useMemo(() => ({ ...kpirHintsFromDocuments(existing), ...choices }), [existing, choices]);
-  const plan = useMemo(() => buildImportPlan(files, rules, hints, existing), [files, rules, hints, existing]);
+  const savedOverrides = useMemo(
+    () => (overridesState.status === 'ready' ? overridesState.data : {}),
+    [overridesState],
+  );
+  const overrides = useMemo(() => {
+    const merged: CategoryOverrides = { ...savedOverrides };
+    for (const [id, category] of Object.entries(overrideEdits)) {
+      if (category) merged[id] = category;
+      else delete merged[id];
+    }
+    return merged;
+  }, [savedOverrides, overrideEdits]);
+  const hints = useMemo(
+    () => ({ ...kpirHintsFromDocuments(existing, rules, overrides), ...choices }),
+    [existing, rules, overrides, choices],
+  );
+  const plan = useMemo(
+    () => buildImportPlan(files, rules, hints, existing, overrides),
+    [files, rules, hints, existing, overrides],
+  );
 
-  const loadError =
-    docsState.status === 'error' ? docsState.error : rulesState.status === 'error' ? rulesState.error : null;
-  if (loadError) return <Alert color="red">Не вдалося прочитати дані: {loadError.message}</Alert>;
-  if (docsState.status === 'loading' || rulesState.status === 'loading') return <Loader aria-label="Завантаження" />;
+  const loadError = [docsState, rulesState, overridesState].find((s) => s.status === 'error');
+  if (loadError?.status === 'error') {
+    return <Alert color="red">Не вдалося прочитати дані: {loadError.error.message}</Alert>;
+  }
+  if ([docsState, rulesState, overridesState].some((s) => s.status === 'loading')) {
+    return <Loader aria-label="Завантаження" />;
+  }
+
+  /** Вибір суми робився з варіантів старої категорії: для документів, чия категорія змінилася, він скидається */
+  const dropChoices = (ids: readonly string[]) =>
+    setChoices((c) => {
+      const rest = { ...c };
+      for (const id of ids) delete rest[id];
+      return rest;
+    });
 
   const editRule = (key: string, edit: ContractorRule) => {
     setRuleEdits((r) => ({ ...r, [key]: { ...r[key], ...edit } }));
+    if (edit.category) {
+      dropChoices(plan.files.flatMap((f) => f.purchases.filter((p) => p.key === key && !p.override).map((p) => p.id)));
+    }
+    setSave({ kind: 'idle' });
+  };
+
+  const editOverride = (id: string, category: CostCategory | null) => {
+    setOverrideEdits((o) => ({ ...o, [id]: category }));
+    dropChoices([id]);
     setSave({ kind: 'idle' });
   };
 
@@ -193,11 +316,13 @@ export function ImportPage() {
       const changed = Object.fromEntries(Object.keys(ruleEdits).map((key) => [key, rules[key]]));
       await saveJpkImport(uid, {
         rules: changed,
+        overrides: overrideEdits,
         documents: plan.documents,
         remove: plan.stale,
         references: plan.references,
       });
       setRuleEdits({});
+      setOverrideEdits({});
       setSave({ kind: 'done', count: plan.documents.length });
     } catch (e) {
       setSave({ kind: 'error', message: (e as Error).message });
@@ -301,6 +426,7 @@ export function ImportPage() {
             setChoices((c) => ({ ...c, [id]: v }));
             setSave({ kind: 'idle' });
           }}
+          onCategory={editOverride}
         />
       ))}
 

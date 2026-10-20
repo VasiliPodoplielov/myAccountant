@@ -1,4 +1,4 @@
-import type { LedgerDocument } from '@jdg/core';
+import { jpkDocumentId, type LedgerDocument } from '@jdg/core';
 import { describe, expect, it } from 'vitest';
 import { buildImportPlan, parseFile, staleImported } from './importPlan';
 
@@ -69,6 +69,70 @@ describe('план імпорту', () => {
     const plan = buildImportPlan([correction], {}, {}, first.documents);
     expect(plan.files[0].correction).toBe(true);
     expect(plan.stale).toEqual([first.documents[1].id]);
+  });
+});
+
+describe('категорія окремого документа', () => {
+  const twoFromOneVendor = parseFile(
+    'JPK_08.xml',
+    jpk(8, [purchase('2222222222', 'F 31866/4528/26', '2026-08-10'), purchase('2222222222', 'F 2', '2026-08-11')]),
+  );
+  const rules = { '2222222222': { category: 'carMixed' as const } };
+  const small = jpkDocumentId('cost', '2222222222', 'F 31866/4528/26');
+
+  it('рядки закупівлі файла з id документа, сумами з JPK і категорією за правилом', () => {
+    const plan = buildImportPlan([twoFromOneVendor], rules, {}, []);
+    expect(plan.files[0].purchases).toEqual([
+      {
+        id: small,
+        key: '2222222222',
+        number: 'F 31866/4528/26',
+        contractorName: 'Firma 2222222222',
+        net: 10_000,
+        vat: 2_300,
+        ruleCategory: 'carMixed',
+      },
+      {
+        id: jpkDocumentId('cost', '2222222222', 'F 2'),
+        key: '2222222222',
+        number: 'F 2',
+        contractorName: 'Firma 2222222222',
+        net: 10_000,
+        vat: 2_300,
+        ruleCategory: 'carMixed',
+      },
+    ]);
+  });
+  it('рядки, що не стануть документом за жодної категорії, і дублі — без вибору категорії', () => {
+    const file = parseFile(
+      'JPK_08.xml',
+      jpk(8, [
+        purchase('2222222222', 'F 1', '2026-08-10'),
+        purchase('2222222222', 'F 1', '2026-08-10'),
+        purchase('2222222222', 'ST 1', '2026-08-10') + '<tns:K_40>1000.00</tns:K_40><tns:K_41>230.00</tns:K_41>',
+      ]),
+    );
+    expect(buildImportPlan([file], rules, {}, []).files[0].purchases.map((p) => p.number)).toEqual(['F 1']);
+  });
+  it('перевизначення діє на документ і видне в рядку, правило контрагента не змінюється', () => {
+    const plan = buildImportPlan([twoFromOneVendor], rules, {}, [], { [small]: 'other' });
+    expect(plan.files[0].purchases[0]).toMatchObject({ ruleCategory: 'carMixed', override: 'other' });
+    expect(plan.documents.map((d) => d.kind === 'cost' && d.category)).toEqual(['other', 'carMixed']);
+    expect(plan.ready).toBe(true);
+  });
+  it('усі документи контрагента без правила перевизначено — імпорт готовий', () => {
+    const plan = buildImportPlan([twoFromOneVendor], {}, {}, [], {
+      [small]: 'other',
+      [jpkDocumentId('cost', '2222222222', 'F 2')]: 'office',
+    });
+    expect(plan.missingRules).toEqual([]);
+    expect(plan.ready).toBe(true);
+  });
+  it('повторний імпорт з перевизначенням не вважає документ застарілим', () => {
+    const first = buildImportPlan([twoFromOneVendor], rules, {}, [], { [small]: 'other' });
+    const again = buildImportPlan([twoFromOneVendor], rules, {}, first.documents, { [small]: 'other' });
+    expect(again.stale).toEqual([]);
+    expect(again.documents).toEqual(first.documents);
   });
 });
 
