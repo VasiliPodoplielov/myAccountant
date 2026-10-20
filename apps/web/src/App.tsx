@@ -1,6 +1,7 @@
 import { AppShell, Burger, Button, Group, NavLink, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useAuth } from './auth/AuthContext';
+import { AddDocumentPage } from './accounting/AddDocumentPage';
 import { MonthPage } from './accounting/MonthPage';
 import { YearPage } from './accounting/YearPage';
 import { ImportPage } from './import/ImportPage';
@@ -10,6 +11,7 @@ import { Navigate, NavLink as RouterNavLink, Route, Routes } from 'react-router'
 
 const pages = [
   { path: '/', label: 'Рік', element: <YearPage /> },
+  { path: '/add', label: 'Додати документ', element: <AddDocumentPage /> },
   { path: '/import', label: 'Імпорт JPK', element: <ImportPage /> },
   { path: '/reconciliation', label: 'Звірка', element: <ReconciliationPage /> },
   { path: '/settings', label: 'Налаштування', element: <SettingsPage /> },

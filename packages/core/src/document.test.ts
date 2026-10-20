@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { documentDates, documentFx, documentIssues, fxDifference, isOtherEuCountry, valueDocument } from './document';
+import {
+  documentDates,
+  documentFx,
+  documentFxDetails,
+  documentIssues,
+  fxDifference,
+  isOtherEuCountry,
+  valueDocument,
+} from './document';
 import { cost, importEu, income, internal } from './fixtures/builders';
 
 describe('дати події', () => {
@@ -78,6 +86,24 @@ describe('курси документа', () => {
   it('ручний курс має перевагу над таблицею', () => {
     const doc = importEu({ issueDate: '2026-03-03', fxRatePit: 4.5 });
     expect(documentFx(doc, { EUR })).toEqual({ pit: 4.5, vat: 4.3 });
+  });
+  it('documentFxDetails: дата таблиці NBP, з якої взято кожен курс', () => {
+    const doc = importEu({ saleDate: '2026-02-28', issueDate: '2026-03-03' });
+    expect(documentFxDetails(doc, { EUR })).toEqual({
+      pit: { rate: 4.3, date: '2026-03-02' },
+      vat: { rate: 4.2, date: '2026-02-27' },
+    });
+  });
+  it('documentFxDetails: ручний курс і PLN без дати', () => {
+    const doc = importEu({ issueDate: '2026-03-03', fxRatePit: 4.5 });
+    expect(documentFxDetails(doc, { EUR })).toEqual({
+      pit: { rate: 4.5, date: null },
+      vat: { rate: 4.3, date: '2026-03-02' },
+    });
+    expect(documentFxDetails(cost())).toEqual({ pit: { rate: 1, date: null }, vat: { rate: 1, date: null } });
+  });
+  it('documentFxDetails: без курсу — null', () => {
+    expect(documentFxDetails(importEu({ issueDate: '2026-06-01' }), { EUR })).toEqual({ pit: null, vat: null });
   });
   it('без курсу — null, і документ не оцінюється', () => {
     const doc = importEu({ issueDate: '2026-06-01' });

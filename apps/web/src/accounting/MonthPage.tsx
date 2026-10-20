@@ -1,11 +1,14 @@
 import { TAX_CONFIG, type MonthResult } from '@jdg/core';
 import { Alert, Anchor, Badge, Button, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
+import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router';
+import { useAuth } from '../auth/AuthContext';
 import { formatPln } from '../format';
 import { MONTH_NAMES } from '../reconciliation/referenceForm';
 import { downloadCsv, toCsv } from '../csv';
 import { formatDate, monthDocuments, monthPayments, type MonthDocumentRow } from './accountingView';
 import { MONTH_DOCS_CSV_HEADER, monthDocumentsCsvRows } from './exportCsv';
+import { DeleteDocumentDialog } from './DeleteDocumentDialog';
 import { useLedgerYear } from './useLedgerYear';
 
 const LATEST_YEAR = Number(Object.keys(TAX_CONFIG).at(-1));
@@ -50,6 +53,9 @@ export function MonthPage() {
   const valid = TAX_CONFIG[year] !== undefined && Number.isInteger(month) && month >= 1 && month <= 12;
   // для неправильної адреси підписуємось на останній рік, щоб не відкривати слухач на неіснуючий; далі Navigate
   const ledger = useLedgerYear(valid ? year : LATEST_YEAR);
+  const { state: auth } = useAuth();
+  const uid = auth.status === 'signedIn' ? auth.user.uid : null;
+  const [toDelete, setToDelete] = useState<MonthDocumentRow | null>(null);
 
   if (!valid) return <Navigate to="/" replace />;
   if (ledger.status === 'error') {
@@ -168,6 +174,7 @@ export function MonthPage() {
                 <Table.Th ta="right">Przychód / koszt</Table.Th>
                 <Table.Th ta="right">VAT</Table.Th>
                 <Table.Th>Облік</Table.Th>
+                <Table.Th />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -198,12 +205,26 @@ export function MonthPage() {
                       )}
                     </Group>
                   </Table.Td>
+                  <Table.Td>
+                    {d.deletable && uid && (
+                      <Button
+                        variant="subtle"
+                        color="red"
+                        size="compact-xs"
+                        aria-label={`Видалити документ ${d.number}`}
+                        onClick={() => setToDelete(d)}
+                      >
+                        Видалити
+                      </Button>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
         </Table.ScrollContainer>
       )}
+      {uid && <DeleteDocumentDialog uid={uid} row={toDelete} onClose={() => setToDelete(null)} />}
 
       {result && (
         <>

@@ -1,5 +1,6 @@
 export * from './tax';
 export * from './nbp';
+export { isIsoDate } from './dates';
 export * from './money';
 export * from './document';
 export * from './kpir';
