@@ -91,6 +91,8 @@ export interface MonthDocumentRow {
   inVat: boolean;
   /** Валютний документ без курсу: не враховано в сумах */
   missingFx: boolean;
+  /** Внесений вручну: лише такі можна видаляти в застосунку (імпорт з JPK перезаписується повторним імпортом) */
+  deletable: boolean;
 }
 
 /**
@@ -120,6 +122,7 @@ export function monthDocuments(
       vatDate: dates.vat,
       inKpir,
       inVat,
+      deletable: doc.source === 'manual',
     };
     if (doc.kind === 'internal') {
       rows.push({

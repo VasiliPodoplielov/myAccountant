@@ -174,13 +174,25 @@ export interface DocumentFx {
   vat: number | null;
 }
 
+/** Курс із датою таблиці NBP; date = null для ручного курсу і для PLN (курсу NBP там немає) */
+export interface FxQuote {
+  rate: number;
+  date: string | null;
+}
+
+/** Як DocumentFx, але з датою, за яку взято курс NBP: щоб показати, звідки він */
+export interface DocumentFxDetails {
+  pit: FxQuote | null;
+  vat: FxQuote | null;
+}
+
 /**
  * Курс PIT — NBP з останнього робочого дня перед днем доходу чи витрати (art. 11a PIT).
  * Курс VAT — перед днем obowiązku podatkowego (art. 31a ust. 1 VAT), а якщо фактуру
  * виставлено раніше — перед днем виставлення (ust. 2).
  */
-export function documentFx(doc: IncomeDocument | CostDocument, tables: FxTables = {}): DocumentFx {
-  if (doc.currency === 'PLN') return { pit: 1, vat: 1 };
+export function documentFxDetails(doc: IncomeDocument | CostDocument, tables: FxTables = {}): DocumentFxDetails {
+  if (doc.currency === 'PLN') return { pit: { rate: 1, date: null }, vat: { rate: 1, date: null } };
 
   const table = tables[doc.currency] ?? {};
   const dates = documentDates(doc);
@@ -195,10 +207,16 @@ export function documentFx(doc: IncomeDocument | CostDocument, tables: FxTables 
     vatBasis = earliest(doc.saleDate, doc.issueDate)!;
   }
 
-  return {
-    pit: doc.fxRatePit ?? nbpRateFor(dates.pit, table)?.rate ?? null,
-    vat: doc.fxRateVat ?? nbpRateFor(vatBasis, table)?.rate ?? null,
+  const quote = (manual: number | undefined, basis: string): FxQuote | null => {
+    if (manual !== undefined) return { rate: manual, date: null };
+    return nbpRateFor(basis, table);
   };
+  return { pit: quote(doc.fxRatePit, dates.pit), vat: quote(doc.fxRateVat, vatBasis) };
+}
+
+export function documentFx(doc: IncomeDocument | CostDocument, tables: FxTables = {}): DocumentFx {
+  const d = documentFxDetails(doc, tables);
+  return { pit: d.pit?.rate ?? null, vat: d.vat?.rate ?? null };
 }
 
 // ---------------------------------------------------------------- valuation

@@ -100,6 +100,11 @@ describe('monthDocuments', () => {
     expect(monthDocuments(docs, 2026, 2).find((r) => r.id === 'sale')).toBeUndefined();
   });
 
+  it('видаляти можна лише внесені вручну, імпорт з JPK — ні', () => {
+    const byId = Object.fromEntries(monthDocuments(docs, 2026, 1).map((r) => [r.id, r.deletable]));
+    expect(byId).toEqual({ fuel: false, usd: true, sale: false, wew: true });
+  });
+
   it('сортує за датою і номером', () => {
     // дати PIT: fuel 01-04, usd 01-10, sale 01-31 (кінець періоду), wew 01-31 (номер WEW після FV)
     expect(monthDocuments(docs, 2026, 1).map((r) => r.id)).toEqual(['fuel', 'usd', 'sale', 'wew']);
