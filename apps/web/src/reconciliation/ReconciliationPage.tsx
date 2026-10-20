@@ -26,6 +26,8 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
+import { downloadCsv, toCsv } from '../csv';
+import { RECONCILIATION_CSV_HEADER, reconciliationCsvRows } from '../accounting/exportCsv';
 import { saveReferenceParts, useDocuments, useFxRates, useReferences, useYearSettings } from '../data/hooks';
 import { formatDiff, formatPln } from '../format';
 import { EMPTY_SETTINGS } from '../settings/settingsForm';
@@ -238,7 +240,29 @@ export function ReconciliationPage() {
     <Stack maw={1100}>
       <Group justify="space-between" align="end">
         <Title order={2}>Звірка з бухгалтером</Title>
-        <Select label="Рік" data={YEARS} value={year} onChange={(v) => v && setYear(v)} allowDeselect={false} w={120} />
+        <Group align="end">
+          {report.ok && (
+            <Button
+              variant="default"
+              onClick={() =>
+                downloadCsv(
+                  `zvirka-${year}.csv`,
+                  toCsv(RECONCILIATION_CSV_HEADER, reconciliationCsvRows(report.months)),
+                )
+              }
+            >
+              Експорт CSV
+            </Button>
+          )}
+          <Select
+            label="Рік"
+            data={YEARS}
+            value={year}
+            onChange={(v) => v && setYear(v)}
+            allowDeselect={false}
+            w={120}
+          />
+        </Group>
       </Group>
       <Text size="sm" c="dimmed">
         Облік рахує з документів; еталон — з поданої JPK_V7M (імпорт) і з сум, внесених нижче з KPiR, DRA і розрахунку
