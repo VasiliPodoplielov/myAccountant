@@ -146,8 +146,14 @@ export function monthDocuments(
   return rows.sort((a, b) => a.pitDate.localeCompare(b.pitDate) || a.number.localeCompare(b.number));
 }
 
-/** Рядок про термін: «20.11.2026» */
+/** 'YYYY-MM-DD' → «20/11/2026» */
 export function formatDate(iso: string): string {
   const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
+  return `${d}/${m}/${y}`;
+}
+
+/** «20/11/2026» → 'YYYY-MM-DD'; null, якщо запис не відповідає формату dd/mm/yyyy */
+export function parseDate(text: string): string | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text.trim());
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }

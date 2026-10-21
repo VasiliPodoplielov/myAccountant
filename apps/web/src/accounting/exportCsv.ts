@@ -1,7 +1,8 @@
-import type { MonthReport, MonthResult } from '@jdg/core';
+import type { KpirEntry, MonthReport, MonthResult } from '@jdg/core';
 import { groszeToCsv } from '../csv';
 import { metricLabel } from '../reconciliation/referenceForm';
 import { kpirCosts, type MonthDocumentRow } from './accountingView';
+import { kpirTaxId } from './booksView';
 
 /** Вивантаження для звірки поза додатком: усі показники розрахунку року, гроші в злотих */
 
@@ -92,4 +93,71 @@ export function reconciliationCsvRows(months: readonly MonthReport[]): (string |
           r.note ?? '',
         ]),
   );
+}
+
+export const KPIR_CSV_HEADER = [
+  'lp',
+  'date',
+  'ksef_number',
+  'doc_number',
+  'contractor_tax_id',
+  'contractor_name',
+  'description',
+  'col9',
+  'col10',
+  'col11',
+  'col12',
+  'col13',
+  'col14',
+  'col15',
+  'col16',
+];
+
+/** Записи книги з колонками 9–16 (кол. 11 = 9+10, кол. 16 = 14+15); адреса й вільні колонки не вивантажуються */
+export const kpirCsvRows = (entries: readonly KpirEntry[]) =>
+  entries.map((e) => [
+    e.lp,
+    e.date,
+    e.ksefNumber ?? '',
+    e.docNumber,
+    kpirTaxId(e),
+    e.contractorName ?? '',
+    e.description,
+    groszeToCsv(e.col9),
+    groszeToCsv(e.col10),
+    groszeToCsv(e.col9 + e.col10),
+    groszeToCsv(e.col12),
+    groszeToCsv(e.col13),
+    groszeToCsv(e.col14),
+    groszeToCsv(e.col15),
+    groszeToCsv(e.col14 + e.col15),
+  ]);
+
+/** Реєстр VAT: загальні колонки та поля ewidencji, що є в рядках; рядок «разом» додається в кінці */
+export function vatRegisterCsv<F extends string>(
+  rows: readonly {
+    date: string;
+    docNumber: string;
+    contractor: { name: string; nip?: string };
+    ksefNumber?: string;
+    marker?: string;
+    fields: Partial<Record<F, number>>;
+  }[],
+  fields: readonly F[],
+  totals: Partial<Record<F, number>>,
+): { header: string[]; rows: (string | number)[][] } {
+  return {
+    header: ['date', 'doc_number', 'contractor_nip', 'contractor_name', 'ksef_or_marker', ...fields],
+    rows: [
+      ...rows.map((r) => [
+        r.date,
+        r.docNumber,
+        r.contractor.nip ?? '',
+        r.contractor.name,
+        r.ksefNumber ?? r.marker ?? '',
+        ...fields.map((f) => (r.fields[f] === undefined ? '' : groszeToCsv(r.fields[f]))),
+      ]),
+      ['', 'TOTAL', '', '', '', ...fields.map((f) => groszeToCsv(totals[f] ?? 0))],
+    ],
+  };
 }

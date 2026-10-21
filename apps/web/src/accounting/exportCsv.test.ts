@@ -1,8 +1,16 @@
-import { calcYearFromDocuments, TAX_CONFIG, type MonthReport, type YearSettings } from '@jdg/core';
+import { calcYearFromDocuments, TAX_CONFIG, type KpirEntry, type MonthReport, type YearSettings } from '@jdg/core';
 import { describe, expect, it } from 'vitest';
 import { toCsv } from '../csv';
 import { kpirCosts } from './accountingView';
-import { RECONCILIATION_CSV_HEADER, YEAR_CSV_HEADER, reconciliationCsvRows, yearCsvRows } from './exportCsv';
+import {
+  KPIR_CSV_HEADER,
+  RECONCILIATION_CSV_HEADER,
+  YEAR_CSV_HEADER,
+  kpirCsvRows,
+  reconciliationCsvRows,
+  vatRegisterCsv,
+  yearCsvRows,
+} from './exportCsv';
 
 const cfg = TAX_CONFIG[2026]!;
 const settings: YearSettings = {
@@ -76,5 +84,72 @@ describe('reconciliationCsvRows', () => {
   it('примітка з крапкою з комою й лапками екранується', () => {
     const csv = toCsv(RECONCILIATION_CSV_HEADER, reconciliationCsvRows(months));
     expect(csv).toContain('"ok; ""так"""');
+  });
+});
+
+describe('kpirCsvRows', () => {
+  const entry: KpirEntry = {
+    lp: 3,
+    date: '2026-02-05',
+    docNumber: 'FV 2',
+    contractorCountry: 'PL',
+    contractorTaxId: '1111111111',
+    contractorName: 'Firma; "A"',
+    description: 'Sprzedaż usług',
+    col9: 123_456,
+    col10: 100,
+    col12: 0,
+    col13: 0,
+    col14: 0,
+    col15: 5,
+    origin: 'document',
+  };
+
+  it('має стільки комірок, скільки колонок у заголовку, і рахує кол. 11 та 16', () => {
+    const [row] = kpirCsvRows([entry]);
+    expect(row).toHaveLength(KPIR_CSV_HEADER.length);
+    expect(row[KPIR_CSV_HEADER.indexOf('col11')]).toBe('1235.56');
+    expect(row[KPIR_CSV_HEADER.indexOf('col16')]).toBe('0.05');
+    expect(row[KPIR_CSV_HEADER.indexOf('contractor_tax_id')]).toBe('PL1111111111');
+  });
+
+  it('без контрагента й KSeF комірки порожні', () => {
+    const [row] = kpirCsvRows([{ ...entry, contractorTaxId: undefined, contractorName: undefined }]);
+    expect(row[KPIR_CSV_HEADER.indexOf('contractor_tax_id')]).toBe('');
+    expect(row[KPIR_CSV_HEADER.indexOf('contractor_name')]).toBe('');
+  });
+});
+
+describe('vatRegisterCsv', () => {
+  const rows = [
+    {
+      date: '2026-02-05',
+      docNumber: 'FV 2',
+      contractor: { name: 'Firma', nip: '1111111111' },
+      ksefNumber: '123-KSEF',
+      fields: { K_19: 500_000, K_20: 115_000 },
+    },
+    { date: '2026-02-06', docNumber: 'FV 3', contractor: { name: 'Inna' }, marker: 'BFK', fields: { K_19: 100 } },
+  ];
+
+  it('колонки полів, порожні комірки для відсутніх полів і рядок TOTAL', () => {
+    const csv = vatRegisterCsv(rows, ['K_19', 'K_20'], { K_19: 500_100, K_20: 115_000 });
+    expect(csv.header).toEqual([
+      'date',
+      'doc_number',
+      'contractor_nip',
+      'contractor_name',
+      'ksef_or_marker',
+      'K_19',
+      'K_20',
+    ]);
+    expect(csv.rows[0]).toEqual(['2026-02-05', 'FV 2', '1111111111', 'Firma', '123-KSEF', '5000.00', '1150.00']);
+    expect(csv.rows[1]).toEqual(['2026-02-06', 'FV 3', '', 'Inna', 'BFK', '1.00', '']);
+    expect(csv.rows[2]).toEqual(['', 'TOTAL', '', '', '', '5001.00', '1150.00']);
+  });
+
+  it('порожній реєстр дає лише рядок TOTAL з нулями', () => {
+    const csv = vatRegisterCsv([], ['K_42', 'K_43'], {});
+    expect(csv.rows).toEqual([['', 'TOTAL', '', '', '', '0.00', '0.00']]);
   });
 });

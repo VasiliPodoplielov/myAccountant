@@ -26,17 +26,35 @@ describe('швидкі кнопки', () => {
     const f = applyPreset(emptyForm('2026-10-20'), preset('fuel'));
     expect(f).toMatchObject({ kind: 'cost', category: 'carMixed', currency: 'PLN', vatRate: '23' });
   });
-  it('«Claude (EUR)»: import usług, EUR, контрагент не з Польщі', () => {
+  it('«Claude (EUR)»: Anthropic, PBC, EUR, «Інше» зі ставкою np (gross без відліку VAT)', () => {
     const f = applyPreset(emptyForm('2026-10-20'), preset('claude'));
-    expect(f).toMatchObject({ category: 'importServices', currency: 'EUR', country: 'IE' });
-    expect(f.contractorName).toMatch(/Anthropic/);
-    expect(isReverseCharge(f)).toBe(true);
+    expect(f).toMatchObject({
+      kind: 'cost',
+      category: 'other',
+      currency: 'EUR',
+      country: 'US',
+      vatRate: 'np',
+      contractorName: 'Anthropic, PBC',
+    });
+    expect(isReverseCharge(f)).toBe(false);
+  });
+  it('«Claude (EUR)» не залишає номер і суму: їх вводять вручну', () => {
+    const f = applyPreset(emptyForm('2026-10-20'), preset('claude'));
+    expect(f).toMatchObject({ number: '', net: '' });
   });
   it('«Офіс»: office, PLN', () => {
     expect(applyPreset(emptyForm('2026-10-20'), preset('office'))).toMatchObject({
       category: 'office',
       currency: 'PLN',
     });
+  });
+  it('Claude (EUR): gross як netto зі ставкою np — koszt за курсом без VAT у реєстрах', () => {
+    const f = applyPreset(filled({ issueDate: '2026-05-05', net: 22.14 }), preset('claude'));
+    const r = fromDocumentForm(f);
+    if (!r.ok) throw new Error(r.error);
+    const value = valueDocument(r.doc as never, { EUR: { '2026-05-04': 4.2544 } });
+    // 22,14 EUR × 4,2544 = 94,19 zł; VAT немає
+    expect(value).toMatchObject({ netPit: 9_419, vat: 0, vatDeductible: 0, pitAmount: 9_419 });
   });
   it('пресет не стирає введені номер, дату й суму', () => {
     const f = applyPreset(filled({ issueDate: '2026-09-03', net: 55.5 }), preset('fuel'));
@@ -98,7 +116,13 @@ describe('форма → документ', () => {
     });
   });
   it('import usług: VAT з форми ігнорується, його рахує платник', () => {
-    const f = applyPreset(filled({ net: 20, vat: 4.6 }), preset('claude'));
+    const f: DocumentForm = {
+      ...filled({ net: 20, vat: 4.6 }),
+      category: 'importServices',
+      currency: 'EUR',
+      country: 'IE',
+      vatRate: '23',
+    };
     const r = fromDocumentForm({ ...f, vat: 4.6 });
     if (!r.ok) throw new Error(r.error);
     expect(r.doc).toMatchObject({ currency: 'EUR', lines: [{ net: 2_000, vatRate: '23' }] });

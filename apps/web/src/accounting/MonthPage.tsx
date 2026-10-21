@@ -1,14 +1,14 @@
 import { TAX_CONFIG, type MonthResult } from '@jdg/core';
-import { Alert, Anchor, Badge, Button, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
+import { Alert, Badge, Button, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
 import { useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router';
+import { Navigate, useParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
 import { formatPln } from '../format';
-import { MONTH_NAMES } from '../reconciliation/referenceForm';
 import { downloadCsv, toCsv } from '../csv';
 import { formatDate, monthDocuments, monthPayments, type MonthDocumentRow } from './accountingView';
 import { MONTH_DOCS_CSV_HEADER, monthDocumentsCsvRows } from './exportCsv';
 import { DeleteDocumentDialog } from './DeleteDocumentDialog';
+import { MonthHeader } from './MonthHeader';
 import { useLedgerYear } from './useLedgerYear';
 
 const LATEST_YEAR = Number(Object.keys(TAX_CONFIG).at(-1));
@@ -65,31 +65,10 @@ export function MonthPage() {
 
   const result = ledger.results?.[month - 1];
   const rows = monthDocuments(ledger.docs, year, month, ledger.fx);
-  const prev = month > 1 ? month - 1 : null;
-  const next = month < 12 ? month + 1 : null;
 
   return (
     <Stack maw={1100}>
-      <Group justify="space-between" align="end">
-        <Title order={2}>
-          {MONTH_NAMES[month - 1]} {year}
-        </Title>
-        <Group gap="md">
-          {prev && (
-            <Anchor component={Link} to={`/month/${year}/${prev}`}>
-              ← {MONTH_NAMES[prev - 1]}
-            </Anchor>
-          )}
-          <Anchor component={Link} to="/">
-            Рік
-          </Anchor>
-          {next && (
-            <Anchor component={Link} to={`/month/${year}/${next}`}>
-              {MONTH_NAMES[next - 1]} →
-            </Anchor>
-          )}
-        </Group>
-      </Group>
+      <MonthHeader year={year} month={month} section="month" />
 
       {ledger.error && (
         <Alert color="red" title="Не вдалося порахувати рік">
