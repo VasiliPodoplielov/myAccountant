@@ -52,7 +52,7 @@ describe('підтвердження видалення документа', () 
     const table = within(screen.getByRole('dialog')).getByRole('table', { name: 'Документ для видалення' });
     expect(within(table).getByText('TEST/1')).toBeTruthy();
     expect(within(table).getByText('Test Sp. z o.o.')).toBeTruthy();
-    expect(within(table).getByText('20.10.2026')).toBeTruthy();
+    expect(within(table).getByText('20/10/2026')).toBeTruthy();
     expect(within(table).getByText(/83,63/)).toBeTruthy();
     expect(screen.getByText(/неможливо/)).toBeTruthy();
     expect(mocks.deleteDocument).not.toHaveBeenCalled();

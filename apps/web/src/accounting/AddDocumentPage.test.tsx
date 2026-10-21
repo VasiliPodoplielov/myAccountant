@@ -47,7 +47,8 @@ function setup() {
 }
 
 const field = (label: string | RegExp) => screen.getByLabelText(label) as HTMLInputElement;
-const setDate = (label: string, value: string) => fireEvent.change(field(label), { target: { value } });
+const setDate = (label: string, iso: string) =>
+  fireEvent.change(field(label), { target: { value: iso.split('-').reverse().join('/') } });
 const saveButton = () => screen.getByRole('button', { name: 'Зберегти' });
 
 async function fillBasics(user: ReturnType<typeof userEvent.setup>, net = '100') {
@@ -86,7 +87,7 @@ describe('форма «Додати документ»', () => {
     expect(within(preview).queryByText(/Курс NBP/)).toBeNull();
     expect(within(preview).getByText(/Koszt PIT \(75%\)/)).toBeTruthy();
     expect(within(preview).getByText(/83,63/)).toBeTruthy();
-    expect(within(preview).getByText('20.10.2026')).toBeTruthy();
+    expect(within(preview).getByText('20/10/2026')).toBeTruthy();
     expect(within(preview).getByText('2026-10')).toBeTruthy();
 
     await user.click(saveButton());
@@ -159,22 +160,22 @@ describe('форма «Додати документ»', () => {
   });
 
   describe('Claude (EUR)', () => {
-    it('ховає поле VAT, підтягує курси і рахує VAT самим платником', async () => {
+    it('Anthropic, PBC: «Інше» зі ставкою np, курси підтягуються, VAT у реєстри не йде', async () => {
       mocks.eur = { '2026-10-19': 4.25 };
       const user = setup();
       await user.click(screen.getByRole('button', { name: 'Claude (EUR)' }));
-      expect(screen.queryByLabelText('VAT з фактури, zł')).toBeNull();
+      expect(field('Постачальник').value).toBe('Anthropic, PBC');
+      expect(screen.getByText('Для np — сума gross, разом із VAT з рахунку')).toBeTruthy();
       setDate('Дата виставлення', '2026-10-20');
       await fillBasics(user, '20');
 
       const preview = await screen.findByRole('table', { name: 'Попередній розрахунок' });
       expect(within(preview).getByText('Курс NBP')).toBeTruthy();
-      expect(within(preview).getByText('4,2500 (з 19.10.2026)')).toBeTruthy();
-      // 20 EUR × 4,25 = 85,00 zł; VAT 23% = 19,55
-      expect(within(preview).getByText(/VAT \(нараховує платник\)/)).toBeTruthy();
-      expect(within(preview).getByText(/19,55/)).toBeTruthy();
-      // netto за курсом і koszt PIT (100%) однакові
-      expect(within(preview).getAllByText(/85,00/)).toHaveLength(2);
+      expect(within(preview).getByText('4,2500 (з 19/10/2026)')).toBeTruthy();
+      // 20 EUR × 4,25 = 85,00 zł; VAT з фактури не відлічується і в реєстри не йде
+      expect(within(preview).queryByText(/VAT \(нараховує платник\)/)).toBeNull();
+      expect(within(preview).queryByText(/19,55/)).toBeNull();
+      expect(within(preview).getAllByText(/85,00/).length).toBeGreaterThan(0);
 
       await waitFor(() => expect(mocks.syncFxRates).toHaveBeenCalled());
       expect(mocks.syncFxRates).toHaveBeenCalledWith('u1', 'EUR', '2026-10-06', '2026-10-20', mocks.eur);
@@ -182,10 +183,10 @@ describe('форма «Додати документ»', () => {
       await user.click(saveButton());
       await waitFor(() => expect(mocks.saveDocument).toHaveBeenCalledTimes(1));
       expect(mocks.saveDocument.mock.calls[0]![2]).toMatchObject({
-        category: 'importServices',
+        category: 'other',
         currency: 'EUR',
-        contractor: { country: 'IE' },
-        lines: [{ net: 2_000, vatRate: '23' }],
+        contractor: { name: expect.stringContaining('Anthropic, PBC'), country: 'US' },
+        lines: [{ net: 2_000, vatRate: 'np' }],
       });
       expect(mocks.saveDocument.mock.calls[0]![2].lines[0]).not.toHaveProperty('vat');
     });
@@ -274,13 +275,13 @@ describe('форма «Додати документ»', () => {
     });
   });
 
-  it('перемикання пресетів: «Офіс» після «Claude» повертає поле VAT і польського контрагента', async () => {
+  it('перемикання пресетів: «Офіс» після «Claude» повертає ставку 23% і польського контрагента', async () => {
     const user = setup();
     await user.click(screen.getByRole('button', { name: 'Claude (EUR)' }));
-    expect(screen.queryByLabelText('VAT з фактури, zł')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Офіс' }));
-    expect(screen.getByLabelText('VAT з фактури, zł')).toBeTruthy();
     await user.click(screen.getByLabelText('Додатково'));
+    expect(field('Країна контрагента').value).toBe('US');
+    await user.click(screen.getByRole('button', { name: 'Офіс' }));
+    expect(screen.queryByText('Для np — сума gross, разом із VAT з рахунку')).toBeNull();
     expect(field('Країна контрагента').value).toBe('PL');
   });
 });

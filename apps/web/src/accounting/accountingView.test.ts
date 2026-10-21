@@ -1,6 +1,6 @@
 import { calcYearFromDocuments, TAX_CONFIG, type LedgerDocument, type YearSettings } from '@jdg/core';
 import { describe, expect, it } from 'vitest';
-import { formatDate, monthDocuments, monthPayments, yearTotals } from './accountingView';
+import { formatDate, monthDocuments, parseDate, monthPayments, yearTotals } from './accountingView';
 
 const cfg = TAX_CONFIG[2026]!;
 const settings: YearSettings = {
@@ -140,7 +140,18 @@ describe('monthDocuments', () => {
 });
 
 describe('formatDate', () => {
-  it('ISO → ДД.ММ.РРРР', () => {
-    expect(formatDate('2026-02-05')).toBe('05.02.2026');
+  it('ISO → dd/mm/yyyy', () => {
+    expect(formatDate('2026-02-05')).toBe('05/02/2026');
+  });
+});
+
+describe('parseDate', () => {
+  it('dd/mm/yyyy → ISO', () => {
+    expect(parseDate('05/02/2026')).toBe('2026-02-05');
+  });
+  it('інші формати → null', () => {
+    expect(parseDate('5/2/2026')).toBeNull();
+    expect(parseDate('05.02.2026')).toBeNull();
+    expect(parseDate('2026-02-05')).toBeNull();
   });
 });

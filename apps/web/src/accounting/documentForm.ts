@@ -64,7 +64,11 @@ export interface Preset {
   patch: Partial<DocumentForm>;
 }
 
-/** Швидкі кнопки: заповнюють усе, крім номера, дати й суми */
+/**
+ * Швидкі кнопки: заповнюють усе, крім номера, дати й суми.
+ * «Claude (EUR)»: рахунок Anthropic виставлений приватній особі без NIP, з польським VAT 23%, який не
+ * відлічується. Тому це звичайна витрата «Інше» зі ставкою np, а в «Netto» вводиться сума gross.
+ */
 export const PRESETS: Preset[] = [
   {
     id: 'fuel',
@@ -83,13 +87,13 @@ export const PRESETS: Preset[] = [
     label: 'Claude (EUR)',
     patch: {
       kind: 'cost',
-      category: 'importServices',
+      category: 'other',
       currency: 'EUR',
-      country: 'IE',
-      vatRate: '23',
+      country: 'US',
+      vatRate: 'np',
       vat: '',
-      contractorName: 'Anthropic Ireland, Limited',
-      description: 'Subskrypcja Claude',
+      contractorName: 'Anthropic, PBC',
+      description: 'Subskrypcja Claude Pro',
     },
   },
   {

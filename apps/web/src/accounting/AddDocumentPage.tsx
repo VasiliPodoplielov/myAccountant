@@ -31,6 +31,7 @@ import { saveDocument, useFxRates } from '../data/hooks';
 import { syncFxRates } from '../data/fxSync';
 import { formatPln } from '../format';
 import { formatDate } from './accountingView';
+import { DateField } from './DateField';
 import {
   applyPreset,
   emptyForm,
@@ -207,12 +208,11 @@ function AddDocumentForm({ uid }: { uid: string }) {
           value={form.number}
           onChange={(e) => change({ number: e.currentTarget.value })}
         />
-        <TextInput
+        <DateField
           label="Дата виставлення"
-          type="date"
           size="md"
           value={form.issueDate}
-          onChange={(e) => change({ issueDate: e.currentTarget.value })}
+          onChange={(v) => change({ issueDate: v })}
         />
       </SimpleGrid>
 
@@ -226,6 +226,7 @@ function AddDocumentForm({ uid }: { uid: string }) {
       <SimpleGrid cols={{ base: 2, xs: 3 }}>
         <NumberInput
           label="Netto"
+          description={form.vatRate === 'np' ? 'Для np — сума gross, разом із VAT з рахунку' : undefined}
           size="md"
           inputMode="decimal"
           hideControls
@@ -292,18 +293,12 @@ function AddDocumentForm({ uid }: { uid: string }) {
               value={form.contractorNip}
               onChange={(e) => change({ contractorNip: e.currentTarget.value })}
             />
-            <TextInput
+            <DateField
               label="Дата продажу чи виконання послуги"
-              type="date"
               value={form.saleDate}
-              onChange={(e) => change({ saleDate: e.currentTarget.value })}
+              onChange={(v) => change({ saleDate: v })}
             />
-            <TextInput
-              label="Дата оплати"
-              type="date"
-              value={form.paidAt}
-              onChange={(e) => change({ paidAt: e.currentTarget.value })}
-            />
+            <DateField label="Дата оплати" value={form.paidAt} onChange={(v) => change({ paidAt: v })} />
           </SimpleGrid>
           <TextInput
             label="Опис для KPiR"
