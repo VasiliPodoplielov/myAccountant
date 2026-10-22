@@ -1,6 +1,7 @@
 import { AppShell, Burger, Button, Group, NavLink, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useAuth } from './auth/AuthContext';
+import { ColorSchemeToggle } from './ColorSchemeToggle';
 import { AddDocumentPage } from './accounting/AddDocumentPage';
 import { BooksPage } from './accounting/BooksPage';
 import { MonthPage } from './accounting/MonthPage';
@@ -34,9 +35,12 @@ export function App() {
           <Title order={1} size="h4">
             JDG Ledger
           </Title>
-          <Button variant="subtle" size="xs" ml="auto" onClick={() => void signOut()}>
-            Вийти
-          </Button>
+          <Group ml="auto" gap="xs" wrap="nowrap">
+            <ColorSchemeToggle />
+            <Button variant="subtle" size="xs" onClick={() => void signOut()}>
+              Вийти
+            </Button>
+          </Group>
         </Group>
       </AppShell.Header>
 
