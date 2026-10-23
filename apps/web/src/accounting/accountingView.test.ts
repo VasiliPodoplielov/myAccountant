@@ -1,6 +1,6 @@
 import { calcYearFromDocuments, TAX_CONFIG, type LedgerDocument, type YearSettings } from '@jdg/core';
 import { describe, expect, it } from 'vitest';
-import { formatDate, monthDocuments, parseDate, monthPayments, yearTotals } from './accountingView';
+import { formatDate, monthDocuments, parseDate, monthPayments, yearDeadlines, yearTotals } from './accountingView';
 
 const cfg = TAX_CONFIG[2026]!;
 const settings: YearSettings = {
@@ -87,6 +87,62 @@ describe('monthPayments', () => {
 
   it('грудень переходить на січень наступного року', () => {
     expect(monthPayments(2026, dec!)[0]!.due).toBe('2027-01-20');
+  });
+
+  it('термін на неділю переноситься на понеділок і зберігає початкову дату', () => {
+    const aug = calcYearFromDocuments(docs.slice(0, 2), settings, cfg)[7]!;
+    const p = monthPayments(2026, aug);
+    // 20.09.2026 — неділя, 25.09 — пʼятниця
+    expect(p.map((x) => [x.key, x.due, x.shiftedFrom])).toEqual([
+      ['zus', '2026-09-21', '2026-09-20'],
+      ['health', '2026-09-21', '2026-09-20'],
+      ['pit', '2026-09-21', '2026-09-20'],
+      ['vat', '2026-09-25', null],
+    ]);
+  });
+
+  it('термін на робочий день не переноситься', () => {
+    expect(monthPayments(2026, jan!).every((x) => x.shiftedFrom === null)).toBe(true);
+  });
+});
+
+describe('yearDeadlines', () => {
+  const results = calcYearFromDocuments(docs.slice(0, 2), settings, cfg);
+
+  it('кожен місяць дає 20-те і 25-те; відсортовано за датою', () => {
+    const groups = yearDeadlines(2026, results, '2026-01-01');
+    expect(groups).toHaveLength(24);
+    expect(groups.map((g) => g.due)).toEqual([...groups.map((g) => g.due)].sort());
+  });
+
+  it('20-те обʼєднує ZUS, zdrowotną і PIT; сума групи — сума платежів', () => {
+    const feb20 = yearDeadlines(2026, results, '2026-01-01').find((g) => g.due === '2026-02-20')!;
+    expect(feb20.payments.map((p) => p.key)).toEqual(['zus', 'health', 'pit']);
+    expect(feb20.total).toBe(feb20.payments.reduce((a, p) => a + p.amount, 0));
+    expect(feb20.shiftedFrom).toBeNull();
+  });
+
+  it('перенесений термін несе початкову дату й причину', () => {
+    const sep21 = yearDeadlines(2026, results, '2026-01-01').find((g) => g.due === '2026-09-21')!;
+    expect(sep21.shiftedFrom).toBe('2026-09-20');
+    expect(sep21.reason).toBe('niedziela');
+  });
+
+  it('минулий термін — строго раніше за сьогодні', () => {
+    const groups = yearDeadlines(2026, results, '2026-02-20');
+    expect(groups.find((g) => g.due === '2026-02-20')!.past).toBe(false);
+    expect(groups[0]!.due).toBe('2026-02-20');
+    expect(groups[0]!.past).toBe(false);
+    const earlier = yearDeadlines(2026, results, '2026-02-21');
+    expect(earlier.find((g) => g.due === '2026-02-20')!.past).toBe(true);
+  });
+
+  it('грудень потрапляє в січень наступного року', () => {
+    expect(yearDeadlines(2026, results, '2026-01-01').at(-1)!.due).toBe('2027-01-25');
+  });
+
+  it('порожній розрахунок — порожній календар', () => {
+    expect(yearDeadlines(2026, [], '2026-01-01')).toEqual([]);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { KpirEntry, MonthReport, MonthResult } from '@jdg/core';
+import { documentDates, type KpirEntry, type MonthReport, type MonthResult, type StoredDocument } from '@jdg/core';
 import { groszeToCsv } from '../csv';
 import { metricLabel } from '../reconciliation/referenceForm';
 import { kpirCosts, type MonthDocumentRow } from './accountingView';
@@ -160,4 +160,68 @@ export function vatRegisterCsv<F extends string>(
       ['', 'TOTAL', '', '', '', ...fields.map((f) => groszeToCsv(totals[f] ?? 0))],
     ],
   };
+}
+
+export const DOCUMENTS_CSV_HEADER = [
+  'id',
+  'kind',
+  'number',
+  'issue_date',
+  'pit_date',
+  'vat_date',
+  'contractor',
+  'contractor_nip',
+  'country',
+  'currency',
+  'net',
+  'vat',
+  'category',
+  'source',
+];
+
+/**
+ * Документи для бекапу в CSV: по рядку на документ, суми в валюті документа (net і VAT — сума позицій,
+ * для внутрішнього документа net — його сума). Дати PIT і VAT — ті, за якими документ потрапляє в книги.
+ */
+export function documentsCsvRows(docs: readonly StoredDocument[]): (string | number)[][] {
+  return [...docs]
+    .sort((a, b) => a.issueDate.localeCompare(b.issueDate) || a.number.localeCompare(b.number))
+    .map((d) => {
+      const dates = documentDates(d);
+      if (d.kind === 'internal') {
+        return [
+          d.id,
+          d.kind,
+          d.number,
+          d.issueDate,
+          dates.pit,
+          '',
+          d.description ?? '',
+          '',
+          '',
+          'PLN',
+          groszeToCsv(d.amount),
+          '',
+          '',
+          d.source,
+        ];
+      }
+      const hasVat = d.lines.some((l) => l.vat !== undefined);
+      return [
+        d.id,
+        d.kind,
+        d.number,
+        d.issueDate,
+        dates.pit,
+        dates.vat ?? '',
+        d.contractor.name,
+        d.contractor.nip ?? '',
+        d.contractor.country,
+        d.currency,
+        groszeToCsv(d.lines.reduce((sum, l) => sum + l.net, 0)),
+        hasVat ? groszeToCsv(d.lines.reduce((sum, l) => sum + (l.vat ?? 0), 0)) : '',
+        d.kind === 'cost' ? d.category : '',
+        d.source,
+      ];
+    });
 }

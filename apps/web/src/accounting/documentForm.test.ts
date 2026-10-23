@@ -26,7 +26,7 @@ describe('швидкі кнопки', () => {
     const f = applyPreset(emptyForm('2026-10-20'), preset('fuel'));
     expect(f).toMatchObject({ kind: 'cost', category: 'carMixed', currency: 'PLN', vatRate: '23' });
   });
-  it('«Claude (EUR)»: Anthropic, PBC, EUR, «Інше» зі ставкою np (gross без відліку VAT)', () => {
+  it('«Claude (EUR)»: Anthropic, PBC, EUR, «Інше» зі ставкою np (netto, VAT не відлічується)', () => {
     const f = applyPreset(emptyForm('2026-10-20'), preset('claude'));
     expect(f).toMatchObject({
       kind: 'cost',
@@ -48,7 +48,7 @@ describe('швидкі кнопки', () => {
       currency: 'PLN',
     });
   });
-  it('Claude (EUR): gross як netto зі ставкою np — koszt за курсом без VAT у реєстрах', () => {
+  it('Claude (EUR): netto зі ставкою np — koszt за курсом без VAT у реєстрах', () => {
     const f = applyPreset(filled({ issueDate: '2026-05-05', net: 22.14 }), preset('claude'));
     const r = fromDocumentForm(f);
     if (!r.ok) throw new Error(r.error);

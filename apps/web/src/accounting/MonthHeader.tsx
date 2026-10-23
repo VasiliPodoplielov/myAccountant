@@ -2,11 +2,12 @@ import { ActionIcon, Anchor, Breadcrumbs, Group, SegmentedControl, Stack, Text, 
 import { Link, useNavigate } from 'react-router';
 import { MONTH_NAMES } from '../reconciliation/referenceForm';
 
-export type MonthSection = 'month' | 'books';
+export type MonthSection = 'month' | 'books' | 'close';
 
 const SECTIONS: { value: MonthSection; label: string }[] = [
   { value: 'month', label: 'Документи' },
   { value: 'books', label: 'KPiR і VAT' },
+  { value: 'close', label: 'Закриття' },
 ];
 
 function StepButton({ to, label, children }: { to: string | null; label: string; children: string }) {

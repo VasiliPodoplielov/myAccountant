@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   auth: { state: { status: 'signedIn', user: { uid: 'u1' } } } as { state: { status: string; user?: { uid: string } } },
   deleteDocument: vi.fn(),
   docs: [] as unknown[],
+  periods: {} as Record<string, unknown>,
 }));
 
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => mocks.auth }));
@@ -22,6 +23,7 @@ vi.mock('./useLedgerYear', () => ({
     status: 'ready',
     docs: mocks.docs,
     fx: { EUR: {}, USD: {} },
+    periods: mocks.periods,
     hasSettings: true,
     results: null,
     error: null,
@@ -48,6 +50,7 @@ beforeEach(() => {
   mocks.auth.state = { status: 'signedIn', user: { uid: 'u1' } };
   mocks.deleteDocument.mockReset().mockResolvedValue(undefined);
   mocks.docs = [cost('manual-1', 'TEST/1', 'manual'), cost('jpk-1', 'JPK/1', 'import')];
+  mocks.periods = {};
 });
 afterEach(cleanup);
 
@@ -104,5 +107,31 @@ describe('видалення документа на екрані місяця',
     mocks.auth.state = { status: 'signedOut' };
     setup();
     expect(screen.queryByRole('button', { name: /^Видалити документ/ })).toBeNull();
+  });
+});
+
+describe('закритий місяць', () => {
+  it('показує повідомлення з посиланням на закриття й не дає видаляти документи', () => {
+    mocks.periods = { '2026-10': { status: 'closed', confirmations: {} } };
+    setup();
+    expect(screen.getByText('Місяць закрито')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Закриття місяця' }).getAttribute('href')).toBe('/close/2026/10');
+    expect(screen.queryByRole('button', { name: /^Видалити документ/ })).toBeNull();
+    expect(screen.getAllByText('закрито').length).toBeGreaterThan(0);
+  });
+
+  it('відкритий місяць без повідомлення; запис open не блокує видалення', () => {
+    mocks.periods = { '2026-10': { status: 'open', confirmations: {} } };
+    setup();
+    expect(screen.queryByText('Місяць закрито')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Видалити документ TEST/1' })).toBeTruthy();
+  });
+
+  it('закритий лише місяць VAT документа теж блокує видалення', () => {
+    mocks.docs = [{ ...cost('manual-1', 'TEST/1', 'manual'), vatDate: '2026-11-02' }];
+    mocks.periods = { '2026-11': { status: 'closed', confirmations: {} } };
+    setup();
+    // документ є на екрані жовтня за датою PIT, а його VAT-місяць листопад закритий
+    expect(screen.queryByRole('button', { name: 'Видалити документ TEST/1' })).toBeNull();
   });
 });

@@ -1,11 +1,12 @@
-import { TAX_CONFIG, type MonthResult } from '@jdg/core';
-import { Alert, Badge, Button, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
+import { closedPeriodsTouched, isClosed, TAX_CONFIG, type MonthResult } from '@jdg/core';
+import { Alert, Anchor, Badge, Button, Group, Loader, Stack, Table, Text, Title } from '@mantine/core';
 import { useState } from 'react';
-import { Navigate, useParams } from 'react-router';
+import { Link, Navigate, useParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
 import { formatPln } from '../format';
 import { downloadCsv, toCsv } from '../csv';
 import { formatDate, monthDocuments, monthPayments, type MonthDocumentRow } from './accountingView';
+import { periodKey } from './closeView';
 import { MONTH_DOCS_CSV_HEADER, monthDocumentsCsvRows } from './exportCsv';
 import { DeleteDocumentDialog } from './DeleteDocumentDialog';
 import { MonthHeader } from './MonthHeader';
@@ -65,10 +66,23 @@ export function MonthPage() {
 
   const result = ledger.results?.[month - 1];
   const rows = monthDocuments(ledger.docs, year, month, ledger.fx);
+  const monthClosed = isClosed(ledger.periods, periodKey(year, month));
+  // документ, що потрапляє хоч в один закритий місяць (PIT чи VAT), не видаляється
+  const locked = (d: MonthDocumentRow) =>
+    closedPeriodsTouched({ pit: d.pitDate, vat: d.vatDate }, ledger.periods).length > 0;
 
   return (
     <Stack maw={1100}>
       <MonthHeader year={year} month={month} section="month" />
+
+      {monthClosed && (
+        <Alert color="blue" title="Місяць закрито">
+          Документи цього місяця не додаються й не видаляються.{' '}
+          <Anchor component={Link} to={`/close/${year}/${month}`}>
+            Закриття місяця
+          </Anchor>
+        </Alert>
+      )}
 
       {ledger.error && (
         <Alert color="red" title="Не вдалося порахувати рік">
@@ -94,7 +108,15 @@ export function MonthPage() {
                 {monthPayments(year, result).map((p) => (
                   <Table.Tr key={p.key}>
                     <Table.Td>{p.label}</Table.Td>
-                    <Table.Td>{formatDate(p.due)}</Table.Td>
+                    <Table.Td>
+                      {formatDate(p.due)}
+                      {p.shiftedFrom && (
+                        <Text span size="xs" c="dimmed">
+                          {' '}
+                          (перенесено з {formatDate(p.shiftedFrom)})
+                        </Text>
+                      )}
+                    </Table.Td>
                     <Table.Td ta="right">{formatPln(p.amount)}</Table.Td>
                   </Table.Tr>
                 ))}
@@ -167,6 +189,11 @@ export function MonthPage() {
                   <Table.Td ta="right">{d.vat === null ? '—' : formatPln(d.vat)}</Table.Td>
                   <Table.Td>
                     <Group gap={4}>
+                      {locked(d) && (
+                        <Badge color="gray" size="xs">
+                          закрито
+                        </Badge>
+                      )}
                       {d.missingFx && (
                         <Badge color="orange" size="xs">
                           без курсу
@@ -185,7 +212,7 @@ export function MonthPage() {
                     </Group>
                   </Table.Td>
                   <Table.Td>
-                    {d.deletable && uid && (
+                    {d.deletable && !locked(d) && uid && (
                       <Button
                         variant="subtle"
                         color="red"

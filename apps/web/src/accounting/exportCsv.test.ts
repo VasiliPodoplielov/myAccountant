@@ -1,11 +1,20 @@
-import { calcYearFromDocuments, TAX_CONFIG, type KpirEntry, type MonthReport, type YearSettings } from '@jdg/core';
+import {
+  calcYearFromDocuments,
+  TAX_CONFIG,
+  type KpirEntry,
+  type MonthReport,
+  type StoredDocument,
+  type YearSettings,
+} from '@jdg/core';
 import { describe, expect, it } from 'vitest';
 import { toCsv } from '../csv';
 import { kpirCosts } from './accountingView';
 import {
+  DOCUMENTS_CSV_HEADER,
   KPIR_CSV_HEADER,
   RECONCILIATION_CSV_HEADER,
   YEAR_CSV_HEADER,
+  documentsCsvRows,
   kpirCsvRows,
   reconciliationCsvRows,
   vatRegisterCsv,
@@ -151,5 +160,65 @@ describe('vatRegisterCsv', () => {
   it('порожній реєстр дає лише рядок TOTAL з нулями', () => {
     const csv = vatRegisterCsv([], ['K_42', 'K_43'], {});
     expect(csv.rows).toEqual([['', 'TOTAL', '', '', '', '0.00', '0.00']]);
+  });
+});
+
+describe('documentsCsvRows', () => {
+  const base = { contractor: { name: 'Firma; A', nip: '1111111111', country: 'PL' }, currency: 'PLN' as const };
+  const docs: StoredDocument[] = [
+    {
+      ...base,
+      id: 'c1',
+      kind: 'cost',
+      category: 'carMixed',
+      number: 'F 2',
+      issueDate: '2026-03-04',
+      lines: [
+        { net: 10_000, vatRate: '23', vat: 2_300 },
+        { net: 5_000, vatRate: '8', vat: 400 },
+      ],
+      source: 'import',
+    },
+    {
+      ...base,
+      id: 'i1',
+      kind: 'income',
+      number: 'FV 1',
+      issueDate: '2026-03-01',
+      lines: [{ net: 100_000, vatRate: 'np' }],
+      source: 'manual',
+    },
+    {
+      id: 'w1',
+      kind: 'internal',
+      number: 'WEW 1',
+      issueDate: '2026-03-31',
+      description: 'Składki',
+      column: 15,
+      amount: -700,
+      source: 'manual',
+    },
+  ];
+
+  it('рядки за датою документа, суми позицій у злотих', () => {
+    const rows = documentsCsvRows(docs);
+    expect(rows.map((r) => r[0])).toEqual(['i1', 'c1', 'w1']);
+    expect(rows[1]!.slice(10)).toEqual(['150.00', '27.00', 'carMixed', 'import']);
+  });
+
+  it('позиції без VAT дають порожнє поле VAT, дохід — порожню категорію', () => {
+    expect(documentsCsvRows(docs)[0]!.slice(10)).toEqual(['1000.00', '', '', 'manual']);
+  });
+
+  it('внутрішній документ: сума зі знаком у net, без VAT і контрагента', () => {
+    const internal = documentsCsvRows(docs)[2]!;
+    expect(internal[4]).toBe('2026-03-31');
+    expect(internal.slice(6)).toEqual(['Składki', '', '', 'PLN', '-7.00', '', '', 'manual']);
+  });
+
+  it('рядок відповідає заголовку за кількістю колонок і екранує крапку з комою', () => {
+    const rows = documentsCsvRows(docs);
+    expect(rows.every((r) => r.length === DOCUMENTS_CSV_HEADER.length)).toBe(true);
+    expect(toCsv(DOCUMENTS_CSV_HEADER, rows)).toContain('"Firma; A"');
   });
 });

@@ -1,6 +1,6 @@
-import { calcYearFromDocuments, TAX_CONFIG, type LedgerDocument, type MonthResult } from '@jdg/core';
+import { calcYearFromDocuments, TAX_CONFIG, type LedgerDocument, type MonthResult, type PeriodRecord } from '@jdg/core';
 import { useMemo } from 'react';
-import { useDocuments, useFxRates, useYearSettings } from '../data/hooks';
+import { useDocuments, useFxRates, usePeriods, useYearSettings } from '../data/hooks';
 import { EMPTY_SETTINGS } from '../settings/settingsForm';
 
 export type LedgerYear =
@@ -10,6 +10,8 @@ export type LedgerYear =
       status: 'ready';
       docs: (LedgerDocument & { id: string })[];
       fx: { EUR: Record<string, number>; USD: Record<string, number> };
+      /** Стан місяців ('YYYY-MM'); місяця без запису тут немає, і він відкритий */
+      periods: Record<string, PeriodRecord>;
       /** Налаштування року ще не заповнені: ZUS і zaliczka рахуються без даних за грудень */
       hasSettings: boolean;
       /** Розрахунок року; null, якщо він не вдався (error) */
@@ -23,12 +25,19 @@ export function useLedgerYear(year: number): LedgerYear {
   const settings = useYearSettings(year);
   const eur = useFxRates('EUR');
   const usd = useFxRates('USD');
+  const periods = usePeriods();
 
   return useMemo((): LedgerYear => {
-    const states = [docs, settings, eur, usd];
+    const states = [docs, settings, eur, usd, periods];
     const failed = states.find((s) => s.status === 'error');
     if (failed?.status === 'error') return { status: 'error', error: failed.error };
-    if (docs.status !== 'ready' || settings.status !== 'ready' || eur.status !== 'ready' || usd.status !== 'ready') {
+    if (
+      docs.status !== 'ready' ||
+      settings.status !== 'ready' ||
+      eur.status !== 'ready' ||
+      usd.status !== 'ready' ||
+      periods.status !== 'ready'
+    ) {
       return { status: 'loading' };
     }
     const cfg = TAX_CONFIG[year];
@@ -38,6 +47,7 @@ export function useLedgerYear(year: number): LedgerYear {
         status: 'ready',
         docs: docs.data,
         fx,
+        periods: periods.data,
         hasSettings: false,
         results: null,
         error: `Немає ставок на ${year} рік`,
@@ -45,16 +55,25 @@ export function useLedgerYear(year: number): LedgerYear {
     }
     try {
       const results = calcYearFromDocuments(docs.data, settings.data ?? EMPTY_SETTINGS, cfg, { fx });
-      return { status: 'ready', docs: docs.data, fx, hasSettings: settings.data !== null, results, error: null };
+      return {
+        status: 'ready',
+        docs: docs.data,
+        fx,
+        periods: periods.data,
+        hasSettings: settings.data !== null,
+        results,
+        error: null,
+      };
     } catch (e) {
       return {
         status: 'ready',
         docs: docs.data,
         fx,
+        periods: periods.data,
         hasSettings: settings.data !== null,
         results: null,
         error: (e as Error).message,
       };
     }
-  }, [docs, settings, eur, usd, year]);
+  }, [docs, settings, eur, usd, periods, year]);
 }

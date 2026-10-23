@@ -9,3 +9,6 @@ export * from './ledger';
 export * from './jpk';
 export * from './jpkImport';
 export * from './reference';
+export * from './deadlines';
+export * from './closing';
+export * from './backup';
