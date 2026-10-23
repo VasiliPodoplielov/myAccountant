@@ -1,7 +1,7 @@
 import {
-  dueDates,
   jpkPeriod,
   documentDates,
+  shiftedDueDates,
   valueDocument,
   type FxTables,
   type LedgerDocument,
@@ -57,19 +57,69 @@ export interface Payment {
   key: 'zus' | 'health' | 'pit' | 'vat';
   label: string;
   amount: number;
-  /** Термін сплати, 'YYYY-MM-DD' */
+  /** Термін сплати з перенесенням з вихідних і свят, 'YYYY-MM-DD' */
   due: string;
+  /** Чому термін перенесено з 20-го чи 25-го; null — не переносився */
+  shiftedFrom: string | null;
 }
 
-/** Що і до якого числа платити за місяць (ZUS, zdrowotna, PIT — до 20-го M+1; VAT — до 25-го) */
+/**
+ * Що і до якого числа платити за місяць (ZUS, zdrowotna, PIT — до 20-го M+1; VAT — до 25-го).
+ * Термін, що припав на суботу, неділю чи свято, переноситься на наступний робочий день.
+ */
 export function monthPayments(year: number, result: MonthResult): Payment[] {
-  const due = dueDates(year, result.month);
+  const due = shiftedDueDates(year, result.month);
+  const payment = (key: Payment['key'], label: string, amount: number): Payment => ({
+    key,
+    label,
+    amount,
+    due: due[key].due,
+    shiftedFrom: due[key].reason ? due[key].nominal : null,
+  });
   return [
-    { key: 'zus', label: 'ZUS: społeczne + FP', amount: result.zusTotal, due: due.zus },
-    { key: 'health', label: 'ZUS: zdrowotna', amount: result.health, due: due.health },
-    { key: 'pit', label: 'Zaliczka PIT', amount: result.pitAdvance, due: due.pit },
-    { key: 'vat', label: 'VAT (JPK_V7M)', amount: result.vatDue, due: due.vat },
+    payment('zus', 'ZUS: społeczne + FP', result.zusTotal),
+    payment('health', 'ZUS: zdrowotna', result.health),
+    payment('pit', 'Zaliczka PIT', result.pitAdvance),
+    payment('vat', 'VAT (JPK_V7M)', result.vatDue),
   ];
+}
+
+export interface DeadlineGroup {
+  /** Термін, 'YYYY-MM-DD' */
+  due: string;
+  /** Дата за правилом, якщо термін перенесено; null — не переносився */
+  shiftedFrom: string | null;
+  /** Причина перенесення: «sobota», «niedziela» чи назва свята */
+  reason: string | null;
+  /** Термін уже минув відносно `today` */
+  past: boolean;
+  payments: (Payment & { month: number })[];
+  total: number;
+}
+
+/**
+ * Календар року: платежі всіх місяців, згруповані за фактичним терміном. Платежі за грудень потрапляють
+ * у січень наступного року. Нульові суми лишаються: термін настає, навіть якщо платити нічого.
+ */
+export function yearDeadlines(year: number, results: readonly MonthResult[], today: string): DeadlineGroup[] {
+  const groups = new Map<string, DeadlineGroup>();
+  for (const result of results) {
+    const shifted = shiftedDueDates(year, result.month);
+    for (const p of monthPayments(year, result)) {
+      const group = groups.get(p.due) ?? {
+        due: p.due,
+        shiftedFrom: p.shiftedFrom,
+        reason: shifted[p.key].reason,
+        past: p.due < today,
+        payments: [],
+        total: 0,
+      };
+      group.payments.push({ ...p, month: result.month });
+      group.total += p.amount;
+      groups.set(p.due, group);
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.due.localeCompare(b.due));
 }
 
 export interface MonthDocumentRow {
@@ -145,6 +195,14 @@ export function monthDocuments(
   }
   return rows.sort((a, b) => a.pitDate.localeCompare(b.pitDate) || a.number.localeCompare(b.number));
 }
+
+/** Дата за місцевим часом, 'YYYY-MM-DD': toISOString дав би UTC і до 02:00 влітку показав би вчорашню дату */
+export function localIsoDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export const localToday = () => localIsoDate(new Date());
 
 /** 'YYYY-MM-DD' → «20/11/2026» */
 export function formatDate(iso: string): string {

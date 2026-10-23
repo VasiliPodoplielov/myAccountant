@@ -15,6 +15,9 @@ describe('paths', () => {
     expect(paths.vendorRule('u1', '7740001454').join('/')).toBe('users/u1/vendorRules/7740001454');
     expect(paths.categoryOverridesCollection('u1').join('/')).toBe('users/u1/categoryOverrides');
     expect(paths.categoryOverride('u1', 'jpk-cost-1-F').join('/')).toBe('users/u1/categoryOverrides/jpk-cost-1-F');
+    expect(paths.periodsCollection('u1').join('/')).toBe('users/u1/periods');
+    expect(paths.period('u1', '2026-03').join('/')).toBe('users/u1/periods/2026-03');
+    expect(paths.entry('u1', 'documents', 'd7').join('/')).toBe('users/u1/documents/d7');
   });
 
   it('ключ правила без NIP не ламає шлях', () => {

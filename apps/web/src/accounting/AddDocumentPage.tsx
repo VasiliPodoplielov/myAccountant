@@ -1,5 +1,7 @@
 import {
   CATEGORY_RULES,
+  closedPeriodsTouched,
+  documentDates,
   documentFxDetails,
   valueDocument,
   type CostCategory,
@@ -27,10 +29,10 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
-import { saveDocument, useFxRates } from '../data/hooks';
+import { saveDocument, useFxRates, usePeriods } from '../data/hooks';
 import { syncFxRates } from '../data/fxSync';
 import { formatPln } from '../format';
-import { formatDate } from './accountingView';
+import { formatDate, localToday } from './accountingView';
 import { DateField } from './DateField';
 import {
   applyPreset,
@@ -62,13 +64,6 @@ const VAT_RATES: { value: VatRateCode; label: string }[] = [
 
 const CURRENCIES = ['PLN', 'EUR', 'USD'];
 
-/** Сьогодні за місцевим часом: toISOString дав би UTC і до 02:00 влітку показав би вчорашню дату */
-function localToday(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** 4,2500: курси NBP мають чотири знаки */
 const formatRate = ({ rate, date }: FxQuote) =>
   rate.toLocaleString('pl-PL', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) +
@@ -92,6 +87,7 @@ function AddDocumentForm({ uid }: { uid: string }) {
   const [fxSyncedKey, setFxSyncedKey] = useState<string | null>(null);
   const eur = useFxRates('EUR');
   const usd = useFxRates('USD');
+  const periods = usePeriods();
 
   const change = (patch: Partial<DocumentForm>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -101,6 +97,9 @@ function AddDocumentForm({ uid }: { uid: string }) {
   // чернетка документа для попереднього перегляду; помилки валідації показуємо лише при збереженні
   const draft = useMemo(() => fromDocumentForm(form), [form]);
   const range = draft.ok ? fxRange(draft.doc) : null;
+  // документ у закритому місяці (за датою PIT чи VAT) не зберігається, доки місяць не відкрито знову
+  const closedMonths =
+    draft.ok && periods.status === 'ready' ? closedPeriodsTouched(documentDates(draft.doc), periods.data) : [];
   const rangeKey = range && `${form.currency}:${range.from}:${range.to}`;
   const tables = useMemo(
     () => ({
@@ -145,6 +144,7 @@ function AddDocumentForm({ uid }: { uid: string }) {
       setState({ kind: 'error', message: draft.error });
       return;
     }
+    if (closedMonths.length > 0 || periods.status !== 'ready') return;
     setState({ kind: 'saving' });
     try {
       // без курсу валютний документ не потрапить у розрахунок; докачуємо, якщо ефект не встиг
@@ -226,7 +226,9 @@ function AddDocumentForm({ uid }: { uid: string }) {
       <SimpleGrid cols={{ base: 2, xs: 3 }}>
         <NumberInput
           label="Netto"
-          description={form.vatRate === 'np' ? 'Для np — сума gross, разом із VAT з рахунку' : undefined}
+          description={
+            form.vatRate === 'np' ? 'Для np — сума netto з рахунку; VAT не відлічується і в koszty не йде' : undefined
+          }
           size="md"
           inputMode="decimal"
           hideControls
@@ -383,8 +385,26 @@ function AddDocumentForm({ uid }: { uid: string }) {
         </Alert>
       )}
 
+      {periods.status === 'error' && (
+        <Alert color="red" role="alert">
+          Не вдалося прочитати стан місяців ({periods.error.message}): збереження вимкнено, щоб не записати документ у
+          закритий місяць.
+        </Alert>
+      )}
+      {closedMonths.length > 0 && (
+        <Alert color="orange" title="Місяць закрито" role="alert">
+          Документ потрапляє в закритий місяць ({closedMonths.join(', ')}) і не буде збережений. Відкрийте місяць знову
+          на екрані «Закриття», якщо потрібна корекція.
+        </Alert>
+      )}
+
       <Group>
-        <Button size="md" onClick={() => void onSave()} loading={state.kind === 'saving'}>
+        <Button
+          size="md"
+          onClick={() => void onSave()}
+          loading={state.kind === 'saving'}
+          disabled={closedMonths.length > 0 || periods.status !== 'ready'}
+        >
           Зберегти
         </Button>
         {state.kind === 'saved' && (

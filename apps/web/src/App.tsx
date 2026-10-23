@@ -4,8 +4,11 @@ import { useAuth } from './auth/AuthContext';
 import { ColorSchemeToggle } from './ColorSchemeToggle';
 import { AddDocumentPage } from './accounting/AddDocumentPage';
 import { BooksPage } from './accounting/BooksPage';
+import { CalendarPage } from './accounting/CalendarPage';
+import { ClosePage } from './accounting/ClosePage';
 import { MonthPage } from './accounting/MonthPage';
 import { YearPage } from './accounting/YearPage';
+import { BackupPage } from './backup/BackupPage';
 import { ImportPage } from './import/ImportPage';
 import { ReconciliationPage } from './reconciliation/ReconciliationPage';
 import { SettingsPage } from './settings/SettingsPage';
@@ -16,6 +19,8 @@ const pages = [
   { path: '/add', label: 'Додати документ', element: <AddDocumentPage /> },
   { path: '/import', label: 'Імпорт JPK', element: <ImportPage /> },
   { path: '/reconciliation', label: 'Звірка', element: <ReconciliationPage /> },
+  { path: '/calendar', label: 'Календар термінів', element: <CalendarPage /> },
+  { path: '/backup', label: 'Бекап', element: <BackupPage /> },
   { path: '/settings', label: 'Налаштування', element: <SettingsPage /> },
 ];
 
@@ -57,6 +62,7 @@ export function App() {
           ))}
           <Route path="/month/:year/:month" element={<MonthPage />} />
           <Route path="/books/:year/:month" element={<BooksPage />} />
+          <Route path="/close/:year/:month" element={<ClosePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell.Main>

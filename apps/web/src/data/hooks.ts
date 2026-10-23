@@ -5,6 +5,8 @@ import type {
   ForeignCurrency,
   LedgerDocument,
   MonthReference,
+  PeriodRecord,
+  RestoreOp,
   YearSettings,
 } from '@jdg/core';
 import { deleteDoc, deleteField, doc, setDoc, writeBatch, type Firestore, type WriteBatch } from 'firebase/firestore';
@@ -199,4 +201,47 @@ export async function saveJpkImport(uid: string, write: ImportWrite): Promise<vo
     ),
   ];
   await inBatches(firestore, ops, (batch, op) => op(batch));
+}
+
+// ---------------------------------------------------------------- periods/{yyyy-mm}
+
+/** Стан місяців: 'YYYY-MM' → запис. Місяця без запису тут немає, і він відкритий. */
+export function usePeriods(): SnapshotState<Record<string, PeriodRecord>> {
+  const uid = useOwnUid();
+  const state = useCollectionData<PeriodRecord>(uid ? paths.periodsCollection(uid) : null);
+  return useMemo(
+    () =>
+      state.status === 'ready'
+        ? { status: 'ready', data: Object.fromEntries(state.data.map(({ id, ...rec }) => [id, rec])) }
+        : state,
+    [state],
+  );
+}
+
+/** Записує стан місяця повністю: закриття, повторне відкриття, підтвердження чекліста */
+export function savePeriod(uid: string, period: string, record: PeriodRecord): Promise<void> {
+  return setDoc(doc(requireDb(), paths.period(uid, period).join('/')), record);
+}
+
+// ---------------------------------------------------------------- backup
+
+/** Курси NBP усіх днів кешу, як вони лежать у Firestore (для бекапу) */
+export function useFxRateDocs(): SnapshotState<Record<string, FxRateDoc>> {
+  const uid = useOwnUid();
+  const state = useCollectionData<FxRateDoc>(uid ? paths.fxRatesCollection(uid) : null);
+  return useMemo(
+    () =>
+      state.status === 'ready'
+        ? { status: 'ready', data: Object.fromEntries(state.data.map(({ id, ...rates }) => [id, rates])) }
+        : state,
+    [state],
+  );
+}
+
+/** Відновлення з бекапу: лише дописує (merge для курсів), нічого не видаляє */
+export async function restoreBackupOps(uid: string, ops: readonly RestoreOp[]): Promise<void> {
+  const firestore = requireDb();
+  await inBatches(firestore, ops, (batch, op) =>
+    batch.set(doc(firestore, paths.entry(uid, op.collection, op.id).join('/')), op.data, { merge: op.merge === true }),
+  );
 }

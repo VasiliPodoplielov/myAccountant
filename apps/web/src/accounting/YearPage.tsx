@@ -1,4 +1,4 @@
-import { TAX_CONFIG } from '@jdg/core';
+import { isClosed, TAX_CONFIG } from '@jdg/core';
 import { Alert, Anchor, Badge, Button, Group, Loader, Select, Stack, Table, Text, Title } from '@mantine/core';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -6,6 +6,7 @@ import { formatPln } from '../format';
 import { MONTH_NAMES } from '../reconciliation/referenceForm';
 import { downloadCsv, toCsv } from '../csv';
 import { kpirCosts, yearTotals } from './accountingView';
+import { periodKey } from './closeView';
 import { YEAR_CSV_HEADER, yearCsvRows } from './exportCsv';
 import { useLedgerYear } from './useLedgerYear';
 
@@ -87,6 +88,11 @@ export function YearPage() {
                     <Anchor component={Link} to={`/month/${year}/${r.month}`}>
                       {MONTH_NAMES[r.month - 1]}
                     </Anchor>
+                    {isClosed(ledger.periods, periodKey(Number(year), r.month)) && (
+                      <Badge color="green" variant="light" ml="xs" size="xs">
+                        закрито
+                      </Badge>
+                    )}
                     {r.missingFxRates > 0 && (
                       <Badge color="orange" ml="xs" size="xs">
                         без курсу

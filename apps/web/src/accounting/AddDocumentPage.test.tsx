@@ -10,12 +10,15 @@ const mocks = vi.hoisted(() => ({
   saveDocument: vi.fn(),
   syncFxRates: vi.fn(),
   eur: {} as Record<string, number>,
+  periods: {} as Record<string, unknown>,
+  periodsState: null as unknown,
 }));
 
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => mocks.auth }));
 vi.mock('../data/hooks', () => ({
   saveDocument: mocks.saveDocument,
   useFxRates: (currency: string) => ({ status: 'ready', data: currency === 'EUR' ? mocks.eur : EMPTY }),
+  usePeriods: () => mocks.periodsState ?? { status: 'ready', data: mocks.periods },
 }));
 vi.mock('../data/fxSync', () => ({ syncFxRates: mocks.syncFxRates }));
 
@@ -31,6 +34,8 @@ beforeEach(() => {
   mocks.saveDocument.mockReset().mockResolvedValue(undefined);
   mocks.syncFxRates.mockReset().mockResolvedValue(0);
   mocks.eur = {};
+  mocks.periods = {};
+  mocks.periodsState = null;
 });
 afterEach(cleanup);
 
@@ -165,7 +170,7 @@ describe('форма «Додати документ»', () => {
       const user = setup();
       await user.click(screen.getByRole('button', { name: 'Claude (EUR)' }));
       expect(field('Постачальник').value).toBe('Anthropic, PBC');
-      expect(screen.getByText('Для np — сума gross, разом із VAT з рахунку')).toBeTruthy();
+      expect(screen.getByText('Для np — сума netto з рахунку; VAT не відлічується і в koszty не йде')).toBeTruthy();
       setDate('Дата виставлення', '2026-10-20');
       await fillBasics(user, '20');
 
@@ -281,7 +286,44 @@ describe('форма «Додати документ»', () => {
     await user.click(screen.getByLabelText('Додатково'));
     expect(field('Країна контрагента').value).toBe('US');
     await user.click(screen.getByRole('button', { name: 'Офіс' }));
-    expect(screen.queryByText('Для np — сума gross, разом із VAT з рахунку')).toBeNull();
+    expect(screen.queryByText('Для np — сума netto з рахунку; VAT не відлічується і в koszty не йде')).toBeNull();
     expect(field('Країна контрагента').value).toBe('PL');
+  });
+});
+
+describe('закритий місяць', () => {
+  it('документ у закритому місяці: попередження, кнопка вимкнена, нічого не пишеться', async () => {
+    mocks.periods = { '2026-10': { status: 'closed', confirmations: {} } };
+    const user = setup();
+    await user.click(screen.getByRole('button', { name: 'Офіс' }));
+    setDate('Дата виставлення', '2026-10-20');
+    await fillBasics(user);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Місяць закрито');
+    expect(alert.textContent).toContain('2026-10');
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    await user.click(saveButton());
+    expect(mocks.saveDocument).not.toHaveBeenCalled();
+  });
+
+  it('документ в іншому місяці зберігається, хоч жовтень закритий', async () => {
+    mocks.periods = { '2026-10': { status: 'closed', confirmations: {} } };
+    const user = setup();
+    await user.click(screen.getByRole('button', { name: 'Офіс' }));
+    setDate('Дата виставлення', '2026-11-03');
+    await fillBasics(user);
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
+    await user.click(saveButton());
+    await waitFor(() => expect(mocks.saveDocument).toHaveBeenCalledTimes(1));
+  });
+
+  it('стан місяців не прочитано: збереження вимкнено з поясненням', async () => {
+    mocks.periodsState = { status: 'error', error: new Error('permission-denied') };
+    const user = setup();
+    await user.click(screen.getByRole('button', { name: 'Офіс' }));
+    await fillBasics(user);
+    expect(screen.getByRole('alert').textContent).toContain('permission-denied');
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
   });
 });
