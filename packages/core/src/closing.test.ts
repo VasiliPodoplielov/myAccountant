@@ -32,6 +32,7 @@ const report = (over: Partial<MonthReport> = {}): MonthReport => ({
   month: 3,
   period: '2026-03',
   hasReference: true,
+  missing: [],
   rows: [],
   unexplained: 0,
   ...over,
@@ -82,6 +83,18 @@ describe('closingChecklist', () => {
     expect(byId(blocked, 'reconciliation').detail).toBe('Непояснених різниць: 3');
     expect(canClose(blocked)).toBe(false);
     expect(canClose(closingChecklist(ready({ report: report({ unexplained: 0 }) })))).toBe(true);
+  });
+
+  it('неповний еталон блокує закриття й називає, чого бракує', () => {
+    const items = closingChecklist(ready({ report: report({ missing: ['zus', 'pitAdvance'] }) }));
+    expect(byId(items, 'reconciliation').done).toBe(false);
+    expect(byId(items, 'reconciliation').detail).toBe('В еталоні немає: DRA, zaliczka PIT');
+    expect(canClose(items)).toBe(false);
+  });
+
+  it('неповний еталон і непояснені різниці — обидві причини', () => {
+    const items = closingChecklist(ready({ report: report({ missing: ['jpk'], unexplained: 1 }) }));
+    expect(byId(items, 'reconciliation').detail).toBe('В еталоні немає: JPK_V7M. Непояснених різниць: 1');
   });
 
   it('розрахунок не вдався → calc і fx не виконано', () => {
