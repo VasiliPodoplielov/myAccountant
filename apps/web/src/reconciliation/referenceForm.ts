@@ -1,5 +1,38 @@
-import type { MonthReference, ReferenceMetric } from '@jdg/core';
+import type { MonthReference, ReferenceDiff, ReferenceMetric } from '@jdg/core';
 import { fromGrosze, toGrosze } from '../format';
+
+/**
+ * Стан рядка звірки: збігається; уся різниця — наслідок різниць KPiR попередніх місяців (пояснення
+ * не потрібне); пояснена; потребує пояснення. `note` — поточний текст поля (ще не збережений теж).
+ */
+export type DiffStatus = 'match' | 'derived' | 'explained' | 'unexplained';
+
+export function diffStatus(row: Pick<ReferenceDiff, 'diff' | 'root'>, note: string | undefined): DiffStatus {
+  if (row.diff === 0) return 'match';
+  if (note?.trim()) return 'explained';
+  return row.root === 0 ? 'derived' : 'unexplained';
+}
+
+/** «від квітня, червня»: місяці, з різниць KPiR яких прийшов наслідок */
+export function derivedFromLabel(months: readonly number[] | undefined): string {
+  if (!months?.length) return '';
+  return `від ${months.map((m) => MONTH_GENITIVE[m - 1]).join(', ')}`;
+}
+
+const MONTH_GENITIVE = [
+  'січня',
+  'лютого',
+  'березня',
+  'квітня',
+  'травня',
+  'червня',
+  'липня',
+  'серпня',
+  'вересня',
+  'жовтня',
+  'листопада',
+  'грудня',
+];
 
 export const MONTH_NAMES = [
   'Січень',

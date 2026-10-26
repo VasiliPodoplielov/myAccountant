@@ -64,13 +64,21 @@ describe('reconciliationCsvRows', () => {
       month: 1,
       period: '2026-01',
       hasReference: true,
+      missing: [],
       unexplained: 1,
       rows: [
-        { metric: 'kpir.col15', app: 172775, reference: 172000, diff: 775 },
-        { metric: 'vat.due', app: 100, reference: 100, diff: 0, note: 'ok; "так"' },
+        { metric: 'kpir.col15', app: 172775, reference: 172000, diff: 775, derived: -50, root: 825 },
+        { metric: 'vat.due', app: 100, reference: 100, diff: 0, derived: 0, root: 0, note: 'ok; "так"' },
       ],
     },
-    { month: 2, period: '2026-02', hasReference: false, unexplained: 0, rows: [] },
+    {
+      month: 2,
+      period: '2026-02',
+      hasReference: false,
+      missing: ['jpk', 'kpir', 'zus', 'pitAdvance'],
+      unexplained: 0,
+      rows: [],
+    },
   ];
 
   it('рядок на показник, місяць без еталона — один рядок з has_reference = 0', () => {
@@ -84,9 +92,11 @@ describe('reconciliationCsvRows', () => {
       '1727.75',
       '1720.00',
       '7.75',
+      '-0.50',
+      '8.25',
       '',
     ]);
-    expect(rows[2]).toEqual(['2026-02', 0, '', '', '', '', '', '']);
+    expect(rows[2]).toEqual(['2026-02', 0, '', '', '', '', '', '', '', '']);
     for (const r of rows) expect(r).toHaveLength(RECONCILIATION_CSV_HEADER.length);
   });
 

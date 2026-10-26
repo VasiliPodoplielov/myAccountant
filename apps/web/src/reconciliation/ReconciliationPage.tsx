@@ -1,4 +1,5 @@
 import {
+  REFERENCE_PART_LABELS,
   TAX_CONFIG,
   yearReport,
   type MonthReference,
@@ -34,9 +35,12 @@ import { EMPTY_SETTINGS } from '../settings/settingsForm';
 import {
   MONTH_NAMES,
   cleanNotes,
+  derivedFromLabel,
+  diffStatus,
   fromReferenceForm,
   metricLabel,
   toReferenceForm,
+  type DiffStatus,
   type ReferenceForm,
 } from './referenceForm';
 
@@ -52,11 +56,23 @@ const FORM_FIELDS: { key: keyof ReferenceForm; label: string }[] = [
   { key: 'pitAdvance', label: 'Zaliczka PIT' },
 ];
 
-function statusBadge(m: MonthReport) {
+function statusBadges(m: MonthReport) {
   if (!m.hasReference) return <Badge color="gray">немає еталона</Badge>;
-  if (m.unexplained === 0) return <Badge color="green">збігається</Badge>;
-  return <Badge color="red">непояснених різниць: {m.unexplained}</Badge>;
+  return (
+    <>
+      {m.unexplained > 0 && <Badge color="red">непояснених різниць: {m.unexplained}</Badge>}
+      {m.missing.length > 0 && <Badge color="orange">еталон неповний</Badge>}
+      {m.unexplained === 0 && m.missing.length === 0 && <Badge color="green">звірено</Badge>}
+    </>
+  );
 }
+
+const DIFF_COLOR: Record<DiffStatus, string | undefined> = {
+  match: undefined,
+  derived: 'dimmed',
+  explained: 'orange',
+  unexplained: 'red',
+};
 
 /** Ручна частина еталона за місяць: підсумки KPiR, DRA, zaliczka */
 function ReferenceEditor({ uid, period, reference }: { uid: string; period: string; reference?: MonthReference }) {
@@ -140,7 +156,7 @@ function DiffTable({ uid, month, reference }: { uid: string; month: MonthReport;
 
   return (
     <Stack gap={4}>
-      <Table.ScrollContainer minWidth={640}>
+      <Table.ScrollContainer minWidth={760}>
         <Table striped>
           <Table.Thead>
             <Table.Tr>
@@ -148,35 +164,59 @@ function DiffTable({ uid, month, reference }: { uid: string; month: MonthReport;
               <Table.Th ta="right">Облік</Table.Th>
               <Table.Th ta="right">Бухгалтер</Table.Th>
               <Table.Th ta="right">Різниця</Table.Th>
+              <Table.Th ta="right">З неї наслідок</Table.Th>
               <Table.Th>Пояснення</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {month.rows.map((r) => (
-              <Table.Tr key={r.metric}>
-                <Table.Td>{metricLabel(r.metric)}</Table.Td>
-                <Table.Td ta="right">{formatPln(r.app)}</Table.Td>
-                <Table.Td ta="right">{formatPln(r.reference)}</Table.Td>
-                <Table.Td ta="right" c={r.diff === 0 ? undefined : notes[r.metric]?.trim() ? 'orange' : 'red'}>
-                  {formatDiff(r.diff)}
-                </Table.Td>
-                <Table.Td>
-                  {(r.diff !== 0 || notes[r.metric]) && (
-                    <TextInput
-                      size="xs"
-                      aria-label={`Пояснення: ${metricLabel(r.metric)}`}
-                      placeholder="Чому різниця"
-                      value={notes[r.metric] ?? ''}
-                      onChange={(e) => {
-                        const value = e.currentTarget.value;
-                        setNotes((n) => ({ ...n, [r.metric]: value }));
-                      }}
-                      onBlur={() => void saveNotes()}
-                    />
-                  )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
+            {month.rows.map((r) => {
+              const status = diffStatus(r, notes[r.metric]);
+              return (
+                <Table.Tr key={r.metric}>
+                  <Table.Td>{metricLabel(r.metric)}</Table.Td>
+                  <Table.Td ta="right">{formatPln(r.app)}</Table.Td>
+                  <Table.Td ta="right">{formatPln(r.reference)}</Table.Td>
+                  <Table.Td ta="right" c={DIFF_COLOR[status]}>
+                    {formatDiff(r.diff)}
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    {r.diff !== 0 && r.derived !== 0 && (
+                      <>
+                        <Text size="sm" c="dimmed">
+                          {formatDiff(r.derived)}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {derivedFromLabel(r.derivedFrom)}
+                        </Text>
+                      </>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {status === 'derived' && !notes[r.metric] ? (
+                      <Text size="xs" c="dimmed">
+                        Наслідок різниць KPiR, пояснення не потрібне
+                      </Text>
+                    ) : (
+                      ((r.diff !== 0 && r.root !== 0) || notes[r.metric]) && (
+                        <TextInput
+                          size="xs"
+                          aria-label={`Пояснення: ${metricLabel(r.metric)}`}
+                          placeholder={
+                            r.derived !== 0 ? `Чому різниця (без наслідку: ${formatDiff(r.root)})` : 'Чому різниця'
+                          }
+                          value={notes[r.metric] ?? ''}
+                          onChange={(e) => {
+                            const value = e.currentTarget.value;
+                            setNotes((n) => ({ ...n, [r.metric]: value }));
+                          }}
+                          onBlur={() => void saveNotes()}
+                        />
+                      )
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>
@@ -197,6 +237,12 @@ function MonthPanel({ uid, month, reference }: { uid: string; month: MonthReport
   const manualKey = JSON.stringify([reference?.kpir, reference?.zus, reference?.pitAdvance]);
   return (
     <Stack>
+      {month.hasReference && month.missing.length > 0 && (
+        <Alert color="orange" title="Еталон неповний">
+          Немає: {month.missing.map((p) => REFERENCE_PART_LABELS[p]).join(', ')}. Без цього місяць не вважається
+          звіреним і його не можна закрити.
+        </Alert>
+      )}
       <DiffTable key={JSON.stringify(reference?.notes ?? {})} uid={uid} month={month} reference={reference} />
       <ReferenceEditor key={manualKey} uid={uid} period={month.period} reference={reference} />
     </Stack>
@@ -266,7 +312,8 @@ export function ReconciliationPage() {
       </Group>
       <Text size="sm" c="dimmed">
         Облік рахує з документів; еталон — з поданої JPK_V7M (імпорт) і з сум, внесених нижче з KPiR, DRA і розрахунку
-        zaliczki. Місяць звірено, коли кожна різниця нульова або пояснена.
+        zaliczki. Місяць звірено, коли еталон повний, а кожна різниця нульова, пояснена або є наслідком різниць KPiR:
+        різниця витрат у місяці M змінює zdrowotną за M+1, яка повертається в кол. 15 у M+2, і zaliczkę.
       </Text>
       {settings.status === 'ready' && settings.data === null && (
         <Alert color="yellow" title="Налаштування року не заповнені">
@@ -289,7 +336,7 @@ export function ReconciliationPage() {
                   <Text fw={500}>
                     {MONTH_NAMES[m.month - 1]} {year}
                   </Text>
-                  {statusBadge(m)}
+                  {statusBadges(m)}
                 </Group>
               </Accordion.Control>
               <Accordion.Panel>

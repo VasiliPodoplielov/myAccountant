@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { cleanNotes, fromReferenceForm, metricLabel, toReferenceForm } from './referenceForm';
+import {
+  cleanNotes,
+  derivedFromLabel,
+  diffStatus,
+  fromReferenceForm,
+  metricLabel,
+  toReferenceForm,
+} from './referenceForm';
+
+describe('стан рядка звірки', () => {
+  it('нульова різниця збігається, навіть якщо першопричина й наслідок компенсуються', () => {
+    expect(diffStatus({ diff: 0, root: 50 }, undefined)).toBe('match');
+  });
+  it('уся різниця — наслідок: пояснення не потрібне', () => {
+    expect(diffStatus({ diff: -50, root: 0 }, undefined)).toBe('derived');
+  });
+  it('першопричина без пояснення потребує його; з поясненням — пояснена', () => {
+    expect(diffStatus({ diff: 2_000, root: 2_050 }, undefined)).toBe('unexplained');
+    expect(diffStatus({ diff: 2_000, root: 2_050 }, '  ')).toBe('unexplained');
+    expect(diffStatus({ diff: 2_000, root: 2_050 }, 'Постачальник вніс netto')).toBe('explained');
+  });
+});
+
+describe('звідки наслідок', () => {
+  it('місяці в родовому відмінку', () => {
+    expect(derivedFromLabel([4, 6])).toBe('від квітня, червня');
+    expect(derivedFromLabel([1])).toBe('від січня');
+  });
+  it('без джерел — порожньо', () => {
+    expect(derivedFromLabel(undefined)).toBe('');
+    expect(derivedFromLabel([])).toBe('');
+  });
+});
 
 describe('форма еталона', () => {
   it('порожня форма — у еталоні нічого немає', () => {

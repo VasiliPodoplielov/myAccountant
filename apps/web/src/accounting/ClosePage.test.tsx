@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { calcYearFromDocuments, TAX_CONFIG, type LedgerDocument, type PeriodRecord } from '@jdg/core';
+import {
+  calcYearFromDocuments,
+  TAX_CONFIG,
+  yearFigures,
+  type LedgerDocument,
+  type MonthReference,
+  type PeriodRecord,
+} from '@jdg/core';
 import { MantineProvider } from '@mantine/core';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -21,6 +28,14 @@ const sale: Doc = {
   source: 'manual',
 };
 const results = calcYearFromDocuments([sale], EMPTY_SETTINGS, TAX_CONFIG[2026]!);
+const march = yearFigures([sale], EMPTY_SETTINGS, TAX_CONFIG[2026]!)[2]!;
+/** Повний еталон за березень, що збігається з обліком */
+const MARCH_REFERENCE: MonthReference = {
+  vat: march.vat,
+  kpir: { col9: march.kpir.col9, col15: march.kpir.col15 },
+  zus: march.zus,
+  pitAdvance: march.pitAdvance,
+};
 
 const mocks = vi.hoisted(() => ({
   auth: { state: { status: 'signedIn', user: { uid: 'u1' } } } as { state: { status: string; user?: { uid: string } } },
@@ -66,7 +81,7 @@ beforeEach(() => {
   mocks.auth.state = { status: 'signedIn', user: { uid: 'u1' } };
   mocks.savePeriod.mockReset().mockResolvedValue(undefined);
   mocks.periods = { '2026-02': closed() };
-  mocks.references = { '2026-03': {} };
+  mocks.references = { '2026-03': MARCH_REFERENCE };
   mocks.results = results;
   mocks.hasSettings = true;
 });
@@ -118,6 +133,14 @@ describe('чекліст закриття', () => {
     mocks.references = {};
     setup();
     expect(screen.getByText(/Немає еталона за місяць/)).toBeTruthy();
+    expect(closeButton().disabled).toBe(true);
+  });
+
+  it('еталон без DRA і zaliczki: називає, чого бракує, і закрити не можна', () => {
+    mocks.periods = { '2026-02': closed(), '2026-03': { status: 'open', confirmations: CONFIRMED } };
+    mocks.references = { '2026-03': { vat: MARCH_REFERENCE.vat, kpir: MARCH_REFERENCE.kpir } };
+    setup();
+    expect(screen.getByText(/В еталоні немає: DRA, zaliczka PIT$/)).toBeTruthy();
     expect(closeButton().disabled).toBe(true);
   });
 

@@ -4,8 +4,16 @@
  * не додаються й не видаляються без явного повторного відкриття (корекції).
  */
 
-import type { MonthReport } from './reference';
+import { isReconciled, type MonthReport, type ReferencePart } from './reference';
 import type { MonthResult } from './tax';
+
+/** Назви частин еталона для повідомлень */
+export const REFERENCE_PART_LABELS: Record<ReferencePart, string> = {
+  jpk: 'JPK_V7M',
+  kpir: 'KPiR (кол. 9 і 15)',
+  zus: 'DRA',
+  pitAdvance: 'zaliczka PIT',
+};
 
 /** Перевірки, які власник підтверджує сам: програма не бачить повноти внесених документів */
 export type ManualCheck = 'documents' | 'ksef';
@@ -57,7 +65,16 @@ export interface ChecklistInput {
 /** Чекліст закриття: автоматичні перевірки й ручні підтвердження */
 export function closingChecklist(input: ChecklistInput): CheckItem[] {
   const { result, report } = input;
-  const reconciled = !!report && report.hasReference && report.unexplained === 0;
+  const reconciled = isReconciled(report);
+  const reconciliationDetail = (): string | undefined => {
+    if (!report?.hasReference) return 'Немає еталона за місяць';
+    const problems: string[] = [];
+    if (report.missing.length > 0) {
+      problems.push(`В еталоні немає: ${report.missing.map((p) => REFERENCE_PART_LABELS[p]).join(', ')}`);
+    }
+    if (report.unexplained > 0) problems.push(`Непояснених різниць: ${report.unexplained}`);
+    return problems.length > 0 ? problems.join('. ') : undefined;
+  };
   return [
     ...MANUAL_CHECKS.map((c): CheckItem => ({
       id: c.id,
@@ -93,14 +110,10 @@ export function closingChecklist(input: ChecklistInput): CheckItem[] {
     },
     {
       id: 'reconciliation',
-      label: 'Звірку з бухгалтером пройдено (непояснених різниць немає)',
+      label: 'Звірку з бухгалтером пройдено (еталон повний, непояснених різниць немає)',
       kind: 'auto',
       done: reconciled,
-      detail: !report?.hasReference
-        ? 'Немає еталона за місяць'
-        : report.unexplained > 0
-          ? `Непояснених різниць: ${report.unexplained}`
-          : undefined,
+      detail: reconciliationDetail(),
     },
     {
       id: 'previous',

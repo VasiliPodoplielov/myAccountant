@@ -74,14 +74,19 @@ export const RECONCILIATION_CSV_HEADER = [
   'app',
   'reference',
   'diff',
+  'derived',
+  'root',
   'note',
 ];
 
-/** Звірка року: по рядку на показник; місяць без еталона — один рядок із has_reference = 0 */
+/**
+ * Звірка року: по рядку на показник; місяць без еталона — один рядок із has_reference = 0.
+ * derived — похідна частина різниці (каскад від різниць KPiR), root — першопричина.
+ */
 export function reconciliationCsvRows(months: readonly MonthReport[]): (string | number)[][] {
   return months.flatMap((m) =>
     m.rows.length === 0
-      ? [[m.period, m.hasReference ? 1 : 0, '', '', '', '', '', '']]
+      ? [[m.period, m.hasReference ? 1 : 0, '', '', '', '', '', '', '', '']]
       : m.rows.map((r) => [
           m.period,
           1,
@@ -90,6 +95,8 @@ export function reconciliationCsvRows(months: readonly MonthReport[]): (string |
           groszeToCsv(r.app),
           groszeToCsv(r.reference),
           groszeToCsv(r.diff),
+          groszeToCsv(r.derived),
+          groszeToCsv(r.root),
           r.note ?? '',
         ]),
   );
