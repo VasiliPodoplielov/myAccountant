@@ -178,6 +178,9 @@ describe('перевірка файла', () => {
     expect(await screen.findByText('Відрізняється від бази')).toBeTruthy();
     expect(screen.getByText('Місячні суми різні')).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Розбіжності' }).textContent).toContain('Документи: відрізняються — 1');
+    const where = screen.getByRole('list', { name: 'Де розбіжності' }).textContent!;
+    expect(where).toContain('F 7');
+    expect(where).toContain('поля: lines');
   });
 });
 

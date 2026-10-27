@@ -302,7 +302,7 @@ describe('відновлення з експорту (критерій 6)', () =
     if (!parsed.ok) throw new Error(parsed.errors.join('; '));
     const restored = applyToStore(restoreOps(parsed.backup));
     const v = verifyBackup(parsed.backup, restored, { cfg, emptySettings });
-    expect(v).toEqual({ identical: true, differences: [], figuresMatch: true });
+    expect(v).toEqual({ identical: true, differences: [], details: [], figuresMatch: true });
   });
 
   it('відновлення в базу з іншим станом перезаписує збіжні записи й не видаляє зайві', () => {
@@ -324,7 +324,7 @@ describe('verifyBackup', () => {
 
   it('збіг: дані за межами року різницею не вважаються', () => {
     const v = verifyBackup(backup, live, { cfg, emptySettings });
-    expect(v).toEqual({ identical: true, differences: [], figuresMatch: true });
+    expect(v).toEqual({ identical: true, differences: [], details: [], figuresMatch: true });
   });
 
   it('змінений документ, зайвий і відсутній документ', () => {
@@ -341,6 +341,33 @@ describe('verifyBackup', () => {
       expect.arrayContaining(['Документи: у файлі є, у базі немає — 1', 'Документи: відрізняються — 1']),
     );
     expect(v.figuresMatch).toBe(false);
+  });
+
+  it('details: який саме документ відсутній чи змінений і в яких полях', () => {
+    const changed = docs.map((d) =>
+      d.id === 'fuel' ? { ...d, lines: [{ net: 20_000, vatRate: '23' as const, vat: 4_600 }] } : d,
+    );
+    const v = verifyBackup(backup, { ...live, documents: changed.filter((d) => d.id !== 'claude') });
+    expect(v.details).toHaveLength(2);
+    const claude = docs.find((d) => d.id === 'claude')!;
+    const fuel = docs.find((d) => d.id === 'fuel')!;
+    expect(v.details).toContainEqual(expect.stringMatching(/^Документи, у файлі є, у базі немає: /));
+    expect(v.details.find((d) => d.includes('у базі немає'))).toContain(claude.number);
+    const changedLine = v.details.find((d) => d.includes('відрізняється'))!;
+    expect(changedLine).toContain(fuel.number);
+    expect(changedLine).toContain('поля: lines');
+  });
+
+  it('details: зайвий документ у базі, місяць еталона й дата курсу', () => {
+    const v = verifyBackup(backup, {
+      ...live,
+      documents: [...docs, { ...docs[0]!, id: 'stray', number: 'STRAY' }],
+      references: {},
+      fxRates: {},
+    });
+    expect(v.details).toContainEqual(expect.stringMatching(/^Документи, у базі є, у файлі немає: .*STRAY/));
+    expect(v.details.some((d) => d.startsWith('Еталон, у файлі є, у базі немає: місяць '))).toBe(true);
+    expect(v.details.some((d) => d.startsWith('Курси NBP, у файлі є, у базі немає: дата '))).toBe(true);
   });
 
   it('суми з файла порівнюються з повним обліком: файл без документа з курсовою різницею їх не відтворює', () => {

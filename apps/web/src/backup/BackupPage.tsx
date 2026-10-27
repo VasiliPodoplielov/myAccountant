@@ -44,6 +44,9 @@ import { downloadText, readFileText } from './files';
 
 const YEARS = Object.keys(TAX_CONFIG);
 
+/** Скільки записів-розбіжностей показувати: решта лише числом */
+const MAX_DETAILS = 30;
+
 type Loaded = { status: 'ready'; data: BackupData } | { status: 'loading' } | { status: 'error'; error: Error };
 
 /** Усі дані, що входять у бекап, з однієї точки; поки щось вантажиться, бекап не можна робити */
@@ -242,6 +245,17 @@ export function BackupPage() {
               {verification.differences.map((d) => (
                 <List.Item key={d}>{d}</List.Item>
               ))}
+            </List>
+          )}
+          {verification.details.length > 0 && (
+            <List size="sm" aria-label="Де розбіжності" withPadding>
+              {verification.details.slice(0, MAX_DETAILS).map((d, i) => (
+                // однакові документи з різними id дають однакові рядки, тож ключ із номером
+                <List.Item key={`${i}:${d}`}>{d}</List.Item>
+              ))}
+              {verification.details.length > MAX_DETAILS && (
+                <List.Item>…і ще {verification.details.length - MAX_DETAILS}</List.Item>
+              )}
             </List>
           )}
           {restored !== null && (
