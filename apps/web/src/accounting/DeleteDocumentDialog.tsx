@@ -1,6 +1,7 @@
 import { Alert, Button, Group, Modal, Stack, Table, Text } from '@mantine/core';
 import { useState } from 'react';
 import { deleteDocument } from '../data/hooks';
+import { writeErrorMessage } from '../data/writeError';
 import { formatPln } from '../format';
 import { formatDate, type MonthDocumentRow } from './accountingView';
 
@@ -36,7 +37,7 @@ export function DeleteDocumentDialog({
       setState({ kind: 'idle' });
       onClose();
     } catch (e) {
-      setState({ kind: 'error', message: (e as Error).message });
+      setState({ kind: 'error', message: writeErrorMessage(e) });
     }
   };
 

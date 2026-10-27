@@ -197,16 +197,36 @@ describe('відновлення', () => {
     await waitFor(() => expect(mocks.restoreBackupOps).toHaveBeenCalledTimes(1));
     const [uid, ops] = mocks.restoreBackupOps.mock.calls[0]!;
     expect(uid).toBe('u1');
-    // налаштування, 2 документи, еталон, місяць, правило, курс
-    expect(ops).toHaveLength(7);
-    expect(await screen.findByText(/Відновлено записів: 7/)).toBeTruthy();
+    // налаштування, 2 документи, еталон, правило, курс, місяць, список закритих місяців
+    expect(ops).toHaveLength(8);
+    expect(ops.at(-1)).toEqual({ collection: 'locks', id: 'periods', data: { closed: ['2026-03'] } });
+    // документи з полем touchedPeriods, за яким правила перевіряють закриті місяці
+    expect(ops.filter((o: { collection: string }) => o.collection === 'documents')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ data: expect.objectContaining({ touchedPeriods: expect.any(Array) }) }),
+      ]),
+    );
+    expect(await screen.findByText(/Відновлено записів: 8/)).toBeTruthy();
   });
 
-  it('файл зачіпає закритий місяць: попередження в діалозі', async () => {
+  it('файл з тими самими документами закритого місяця відновлюється без попередження', async () => {
     const user = setup();
     await upload(user, backupFile(mocks.data));
     await user.click(await screen.findByRole('button', { name: 'Відновити з файла' }));
-    expect((await screen.findByRole('dialog')).textContent).toContain('закриті місяці (2026-03)');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).not.toContain('закритих місяців');
+    expect(within(dialog).getByRole('button', { name: 'Відновити' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('файл змінює документ закритого місяця: попередження, відновлення вимкнено', async () => {
+    const user = setup();
+    const file = backupFile(mocks.data);
+    mocks.data = { ...baseData(), documents: [docs[0]!, { ...docs[1]!, number: 'ІНШИЙ' } as StoredDocument] };
+    await upload(user, file);
+    await user.click(await screen.findByRole('button', { name: 'Відновити з файла' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('закритих місяців (2026-03)');
+    expect(within(dialog).getByRole('button', { name: 'Відновити' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('помилка запису показується, діалог лишається', async () => {

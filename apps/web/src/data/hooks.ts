@@ -1,15 +1,27 @@
-import type {
-  CategoryOverrides,
-  ContractorRule,
-  CostCategory,
-  ForeignCurrency,
-  LedgerDocument,
-  MonthReference,
-  PeriodRecord,
-  RestoreOp,
-  YearSettings,
+import {
+  isClosingOp,
+  withTouchedPeriods,
+  type CategoryOverrides,
+  type ContractorRule,
+  type CostCategory,
+  type ForeignCurrency,
+  type LedgerDocument,
+  type MonthReference,
+  type PeriodRecord,
+  type RestoreOp,
+  type YearSettings,
 } from '@jdg/core';
-import { deleteDoc, deleteField, doc, setDoc, writeBatch, type Firestore, type WriteBatch } from 'firebase/firestore';
+import {
+  arrayRemove,
+  arrayUnion,
+  deleteDoc,
+  deleteField,
+  doc,
+  setDoc,
+  writeBatch,
+  type Firestore,
+  type WriteBatch,
+} from 'firebase/firestore';
 import { useAuth } from '../auth/AuthContext';
 import { db } from '../firebase/app';
 import { paths } from '../firebase/paths';
@@ -59,8 +71,9 @@ export function useDocuments(): SnapshotState<(LedgerDocument & { id: string })[
   return useCollectionData<LedgerDocument>(uid ? paths.documentsCollection(uid) : null);
 }
 
+/** Пише документ із touchedPeriods: за ним firestore.rules не пускають запис у закритий місяць */
 export function saveDocument(uid: string, id: string, data: LedgerDocument): Promise<void> {
-  return setDoc(doc(requireDb(), paths.document(uid, id).join('/')), data);
+  return setDoc(doc(requireDb(), paths.document(uid, id).join('/')), withTouchedPeriods(data));
 }
 
 export function deleteDocument(uid: string, id: string): Promise<void> {
@@ -183,7 +196,7 @@ export async function saveJpkImport(uid: string, write: ImportWrite): Promise<vo
     ...write.documents.map(
       ({ id, ...data }) =>
         (b: WriteBatch) =>
-          b.set(doc(firestore, paths.document(uid, id).join('/')), data),
+          b.set(doc(firestore, paths.document(uid, id).join('/')), withTouchedPeriods(data as LedgerDocument)),
     ),
     ...write.remove.map((id) => (b: WriteBatch) => b.delete(doc(firestore, paths.document(uid, id).join('/')))),
     ...Object.entries(write.references).map(
@@ -218,9 +231,73 @@ export function usePeriods(): SnapshotState<Record<string, PeriodRecord>> {
   );
 }
 
-/** Записує стан місяця повністю: закриття, повторне відкриття, підтвердження чекліста */
+/** Записує стан відкритого місяця (підтвердження чекліста). Закриття й відкриття — closePeriod і reopenPeriod. */
 export function savePeriod(uid: string, period: string, record: PeriodRecord): Promise<void> {
   return setDoc(doc(requireDb(), paths.period(uid, period).join('/')), record);
+}
+
+/** Закриті місяці з locks/periods: їх перевіряють firestore.rules; null — документа ще немає */
+export function useLockedPeriods(): SnapshotState<string[] | null> {
+  const uid = useOwnUid();
+  const state = useDocData<{ closed?: string[] }>(uid ? paths.periodLock(uid) : null);
+  return useMemo(
+    () => (state.status === 'ready' ? { status: 'ready', data: state.data ? (state.data.closed ?? []) : null } : state),
+    [state],
+  );
+}
+
+/** Проставляє touchedPeriods документам, у яких його немає (записані до правила) або воно застаріло */
+async function stampDocuments(firestore: Firestore, uid: string, docs: readonly (LedgerDocument & { id: string })[]) {
+  await inBatches(firestore, docs, (batch, { id, ...data }) =>
+    batch.set(doc(firestore, paths.document(uid, id).join('/')), withTouchedPeriods(data as LedgerDocument)),
+  );
+}
+
+const lockChange = (period: string, closed: boolean) => ({
+  closed: closed ? arrayUnion(period) : arrayRemove(period),
+});
+
+/**
+ * Закриття місяця. Спершу документам місяця без touchedPeriods поле проставляється, щоб правила їх захищали.
+ * Потім одним пакетом — запис місяця і locks/periods: firestore.rules пускають стан 'closed' лише разом із
+ * місяцем у списку закритих.
+ */
+export async function closePeriod(
+  uid: string,
+  period: string,
+  record: PeriodRecord,
+  stamp: readonly (LedgerDocument & { id: string })[],
+): Promise<void> {
+  const firestore = requireDb();
+  await stampDocuments(firestore, uid, stamp);
+  const batch = writeBatch(firestore);
+  batch.set(doc(firestore, paths.period(uid, period).join('/')), record);
+  batch.set(doc(firestore, paths.periodLock(uid).join('/')), lockChange(period, true), { merge: true });
+  await batch.commit();
+}
+
+/** Повторне відкриття: запис місяця і прибрати місяць з locks/periods, одним пакетом */
+export async function reopenPeriod(uid: string, period: string, record: PeriodRecord): Promise<void> {
+  const firestore = requireDb();
+  const batch = writeBatch(firestore);
+  batch.set(doc(firestore, paths.period(uid, period).join('/')), record);
+  batch.set(doc(firestore, paths.periodLock(uid).join('/')), lockChange(period, false), { merge: true });
+  await batch.commit();
+}
+
+/**
+ * Узгоджує locks/periods зі станом місяця, якщо вони розійшлися: місяць закрили до появи списку (тоді його
+ * документам ще й проставляється touchedPeriods) або список змінили в обхід застосунку
+ */
+export async function syncPeriodLock(
+  uid: string,
+  period: string,
+  closed: boolean,
+  stamp: readonly (LedgerDocument & { id: string })[],
+): Promise<void> {
+  const firestore = requireDb();
+  await stampDocuments(firestore, uid, stamp);
+  await setDoc(doc(firestore, paths.periodLock(uid).join('/')), lockChange(period, closed), { merge: true });
 }
 
 // ---------------------------------------------------------------- backup
@@ -238,10 +315,23 @@ export function useFxRateDocs(): SnapshotState<Record<string, FxRateDoc>> {
   );
 }
 
-/** Відновлення з бекапу: лише дописує (merge для курсів), нічого не видаляє */
+/**
+ * Відновлення з бекапу: лише дописує (merge для курсів), нічого не видаляє. Стан місяців і locks/periods —
+ * окремим останнім пакетом: правила пускають закриття лише разом зі списком закритих, а документи мають
+ * записатися раніше, поки місяці ще відкриті.
+ */
 export async function restoreBackupOps(uid: string, ops: readonly RestoreOp[]): Promise<void> {
   const firestore = requireDb();
-  await inBatches(firestore, ops, (batch, op) =>
-    batch.set(doc(firestore, paths.entry(uid, op.collection, op.id).join('/')), op.data, { merge: op.merge === true }),
+  const set = (batch: WriteBatch, op: RestoreOp) =>
+    batch.set(doc(firestore, paths.entry(uid, op.collection, op.id).join('/')), op.data, { merge: op.merge === true });
+  await inBatches(
+    firestore,
+    ops.filter((op) => !isClosingOp(op)),
+    set,
   );
+  const closing = ops.filter(isClosingOp);
+  if (closing.length === 0) return;
+  const batch = writeBatch(firestore);
+  for (const op of closing) set(batch, op);
+  await batch.commit();
 }

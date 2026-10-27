@@ -1,8 +1,9 @@
 import {
   CATEGORY_RULES,
   closedPeriodsTouched,
-  documentDates,
   documentFxDetails,
+  documentMonth,
+  findSameDocuments,
   valueDocument,
   type CostCategory,
   type FxQuote,
@@ -29,7 +30,8 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
-import { saveDocument, useFxRates, usePeriods } from '../data/hooks';
+import { saveDocument, useDocuments, useFxRates, usePeriods } from '../data/hooks';
+import { writeErrorMessage } from '../data/writeError';
 import { syncFxRates } from '../data/fxSync';
 import { formatPln } from '../format';
 import { formatDate, localToday } from './accountingView';
@@ -88,6 +90,24 @@ function AddDocumentForm({ uid }: { uid: string }) {
   const eur = useFxRates('EUR');
   const usd = useFxRates('USD');
   const periods = usePeriods();
+  const documents = useDocuments();
+
+  // той самий номер від того самого контрагента вже є: попереджаємо, але не забороняємо (бувають корекції)
+  const sameDocuments = useMemo(
+    () =>
+      documents.status === 'ready'
+        ? findSameDocuments(
+            {
+              kind: form.kind,
+              number: form.number,
+              contractorName: form.contractorName,
+              contractorNip: form.contractorNip,
+            },
+            documents.data,
+          )
+        : [],
+    [documents, form.kind, form.number, form.contractorName, form.contractorNip],
+  );
 
   const change = (patch: Partial<DocumentForm>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -97,9 +117,8 @@ function AddDocumentForm({ uid }: { uid: string }) {
   // чернетка документа для попереднього перегляду; помилки валідації показуємо лише при збереженні
   const draft = useMemo(() => fromDocumentForm(form), [form]);
   const range = draft.ok ? fxRange(draft.doc) : null;
-  // документ у закритому місяці (за датою PIT чи VAT) не зберігається, доки місяць не відкрито знову
-  const closedMonths =
-    draft.ok && periods.status === 'ready' ? closedPeriodsTouched(documentDates(draft.doc), periods.data) : [];
+  // документ у закритому місяці (за датою PIT, VAT чи оплати) не зберігається, доки місяць не відкрито знову
+  const closedMonths = draft.ok && periods.status === 'ready' ? closedPeriodsTouched(draft.doc, periods.data) : [];
   const rangeKey = range && `${form.currency}:${range.from}:${range.to}`;
   const tables = useMemo(
     () => ({
@@ -162,7 +181,7 @@ function AddDocumentForm({ uid }: { uid: string }) {
       // поля контрагента й категорії лишаються: наступний документ часто від того самого постачальника
       setForm((f) => ({ ...f, number: '', net: '', vat: '', ksefNumber: '', paidAt: '', saleDate: '' }));
     } catch (e) {
-      setState({ kind: 'error', message: (e as Error).message });
+      setState({ kind: 'error', message: writeErrorMessage(e) });
     }
   };
 
@@ -382,6 +401,33 @@ function AddDocumentForm({ uid }: { uid: string }) {
       {fxError && (
         <Alert color="yellow" title="Курси NBP не завантажено">
           {fxError}
+        </Alert>
+      )}
+
+      {sameDocuments.length > 0 && (
+        <Alert color="yellow" title="Такий документ уже є" role="alert">
+          <Stack gap={4}>
+            <Text size="sm">
+              Документ {form.number.trim()} від цього контрагента вже внесено. Якщо це той самий рахунок, не зберігайте
+              його вдруге.
+            </Text>
+            {sameDocuments.map((d) => {
+              const month = documentMonth(d);
+              const net = d.lines.reduce((sum, l) => sum + l.net, 0);
+              return (
+                <Anchor
+                  key={d.id}
+                  component={Link}
+                  to={`/month/${month.slice(0, 4)}/${Number(month.slice(5))}`}
+                  size="sm"
+                >
+                  {formatDate(d.issueDate)}, netto{' '}
+                  {(net / 100).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                  {d.currency}: відкрити місяць {month}
+                </Anchor>
+              );
+            })}
+          </Stack>
         </Alert>
       )}
 

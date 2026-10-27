@@ -2,11 +2,18 @@
  * Бекап року (етап 8, критерій переходу 6): повний знімок даних року у JSON, перевірка файла і відновлення.
  * Усе чисте: читання й запис Firestore робить веб-додаток, тут лише формат, перевірка й список записів.
  * Відновлення лише дописує: нічого не видаляє, документ із тим самим id перезаписується.
+ * Похідне поле документа touchedPeriods (closing.ts) у файл не йде: відновлення проставляє його заново.
  */
 
-import { closedPeriodsTouched } from './closing';
-import type { PeriodRecord } from './closing';
+import {
+  closedPeriodList,
+  closedPeriodsAffected,
+  withoutTouchedPeriods,
+  withTouchedPeriods,
+  type PeriodRecord,
+} from './closing';
 import { documentDates, type LedgerDocument } from './document';
+import { stableStringify } from './json';
 import { isIsoDate } from './dates';
 import type { CategoryOverrides, ContractorRule } from './jpkImport';
 import { calcYearFromDocuments } from './ledger';
@@ -79,7 +86,10 @@ export function buildBackup(data: BackupData, year: number, now: Date): Backup {
     exportedAt: now.toISOString(),
     year,
     settings: data.settings,
-    documents: data.documents.filter((d) => inYear(d, year)).sort((a, b) => a.id.localeCompare(b.id)),
+    documents: data.documents
+      .filter((d) => inYear(d, year))
+      .map((d) => withoutTouchedPeriods(d) as StoredDocument)
+      .sort((a, b) => a.id.localeCompare(b.id)),
     references: byPrefix(data.references),
     periods: byPrefix(data.periods),
     vendorRules: sortedRecord(data.vendorRules),
@@ -167,7 +177,7 @@ export function parseBackup(text: string): ParsedBackup {
 // ---------------------------------------------------------------- restore
 
 export type RestoreCollection =
-  'settings' | 'documents' | 'reference' | 'periods' | 'vendorRules' | 'categoryOverrides' | 'fxRates';
+  'settings' | 'documents' | 'reference' | 'periods' | 'locks' | 'vendorRules' | 'categoryOverrides' | 'fxRates';
 
 /** Один запис відновлення: колекція користувача, id документа і дані */
 export interface RestoreOp {
@@ -178,13 +188,22 @@ export interface RestoreOp {
   merge?: boolean;
 }
 
-/** Що треба записати, щоб відновити бекап. Ключ правила контрагента кодується так само, як у шляхах Firestore. */
-export function restoreOps(backup: Backup): RestoreOp[] {
+/**
+ * Що треба записати, щоб відновити бекап. Ключ правила контрагента кодується так само, як у шляхах Firestore.
+ * Документи йдуть першими, а стан місяців і locks/periods — останніми: firestore.rules пускають закриття
+ * місяця лише разом зі списком закритих, тож ці записи мають іти одним пакетом (isClosingOp), і документи
+ * пишуться, поки місяці ще не закриті. livePeriods — стан місяців у базі: місяці поза файлом лишаються як були.
+ */
+export function restoreOps(backup: Backup, livePeriods: Readonly<Record<string, PeriodRecord>> = {}): RestoreOp[] {
+  const closed = closedPeriodList({ ...livePeriods, ...backup.periods });
   return [
     ...(backup.settings ? [{ collection: 'settings' as const, id: String(backup.year), data: backup.settings }] : []),
-    ...backup.documents.map(({ id, ...data }): RestoreOp => ({ collection: 'documents', id, data })),
+    ...backup.documents.map(({ id, ...data }): RestoreOp => ({
+      collection: 'documents',
+      id,
+      data: withTouchedPeriods(data as LedgerDocument),
+    })),
     ...sortedEntries(backup.references).map(([id, data]): RestoreOp => ({ collection: 'reference', id, data })),
-    ...sortedEntries(backup.periods).map(([id, data]): RestoreOp => ({ collection: 'periods', id, data })),
     ...sortedEntries(backup.vendorRules).map(([key, data]): RestoreOp => ({
       collection: 'vendorRules',
       id: encodeURIComponent(key),
@@ -196,15 +215,26 @@ export function restoreOps(backup: Backup): RestoreOp[] {
       data: { category },
     })),
     ...sortedEntries(backup.fxRates).map(([id, data]): RestoreOp => ({ collection: 'fxRates', id, data, merge: true })),
+    ...sortedEntries(backup.periods).map(([id, data]): RestoreOp => ({ collection: 'periods', id, data })),
+    ...(Object.keys(backup.periods).length > 0
+      ? [{ collection: 'locks' as const, id: 'periods', data: { closed } }]
+      : []),
   ];
 }
 
-/** Закриті місяці, у які відновлення запише документи: їхні суми зсунуться відносно знімка */
-export function restoreTouchesClosed(backup: Backup, periods: Readonly<Record<string, PeriodRecord>>): string[] {
+/** Записи стану місяців: пишуться одним пакетом наприкінці відновлення */
+export const isClosingOp = (op: RestoreOp) => op.collection === 'periods' || op.collection === 'locks';
+
+/**
+ * Закриті місяці, які відновлення змінило б: документи файла, що відрізняються від бази й торкаються
+ * закритого місяця. Firestore такий запис відхилить; документи без змін записуються.
+ */
+export function restoreTouchesClosed(backup: Backup, live: Pick<BackupData, 'documents' | 'periods'>): string[] {
+  const existing = new Map(live.documents.map(({ id, ...doc }) => [id, doc as LedgerDocument]));
   const touched = new Set<string>();
-  for (const doc of backup.documents) {
+  for (const { id, ...doc } of backup.documents) {
     try {
-      for (const p of closedPeriodsTouched(documentDates(doc), periods)) touched.add(p);
+      for (const p of closedPeriodsAffected(doc as LedgerDocument, existing.get(id), live.periods)) touched.add(p);
     } catch {
       // документ із поганими датами не належить жодному місяцю
     }
@@ -214,18 +244,7 @@ export function restoreTouchesClosed(backup: Backup, periods: Readonly<Record<st
 
 // ---------------------------------------------------------------- verify
 
-/** JSON з відсортованими ключами: однакові дані дають однаковий рядок незалежно від порядку полів */
-export function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  if (isRecord(value)) {
-    const body = Object.keys(value)
-      .filter((k) => value[k] !== undefined)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`);
-    return `{${body.join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
+export { stableStringify } from './json';
 
 export interface BackupVerification {
   /** Файл і поточні дані збігаються в межах року */
@@ -275,7 +294,7 @@ export function verifyBackup(
   const differences = [
     ...diffRecords(
       'Документи',
-      Object.fromEntries(backup.documents.map((d) => [d.id, d])),
+      Object.fromEntries(backup.documents.map((d) => [d.id, withoutTouchedPeriods(d)])),
       Object.fromEntries(scoped.documents.map((d) => [d.id, d])),
     ),
     ...diffRecords('Еталон', backup.references, scoped.references),

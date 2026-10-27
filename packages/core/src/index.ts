@@ -11,4 +11,5 @@ export * from './jpkImport';
 export * from './reference';
 export * from './deadlines';
 export * from './closing';
+export * from './duplicates';
 export * from './backup';

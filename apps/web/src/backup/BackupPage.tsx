@@ -38,6 +38,7 @@ import {
   useVendorRules,
   useYearSettings,
 } from '../data/hooks';
+import { writeErrorMessage } from '../data/writeError';
 import { EMPTY_SETTINGS } from '../settings/settingsForm';
 import { downloadText, readFileText } from './files';
 
@@ -141,7 +142,7 @@ export function BackupPage() {
           backupCfg ? { cfg: backupCfg, emptySettings: EMPTY_SETTINGS } : undefined,
         )
       : null;
-  const closedTouched = parsed?.ok ? restoreTouchesClosed(parsed.backup, data.data.periods) : [];
+  const closedTouched = parsed?.ok ? restoreTouchesClosed(parsed.backup, data.data) : [];
 
   const exportJson = () =>
     downloadText(
@@ -157,12 +158,12 @@ export function BackupPage() {
     setRestoring('busy');
     setError(null);
     try {
-      const ops = restoreOps(parsed.backup);
+      const ops = restoreOps(parsed.backup, data.data.periods);
       await restoreBackupOps(uid, ops);
       setRestored(ops.length);
       setRestoring(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(writeErrorMessage(e));
       setRestoring('confirm');
     }
   };
@@ -276,9 +277,9 @@ export function BackupPage() {
             </Text>
             <CountsTable backup={parsed.backup} label="Буде записано" />
             {closedTouched.length > 0 && (
-              <Alert color="orange">
-                Файл зачіпає закриті місяці ({closedTouched.join(', ')}): їхні суми можуть відрізнятися від знімка.
-                Перевірте закриття після відновлення.
+              <Alert color="orange" role="alert">
+                Файл змінює документи закритих місяців ({closedTouched.join(', ')}): база такий запис відхилить.
+                Відкрийте ці місяці знову на екрані «Закриття», відновіть і закрийте їх після перевірки.
               </Alert>
             )}
             {error && (
@@ -295,7 +296,12 @@ export function BackupPage() {
               >
                 Скасувати
               </Button>
-              <Button color="orange" onClick={() => void restore()} loading={restoring === 'busy'}>
+              <Button
+                color="orange"
+                onClick={() => void restore()}
+                loading={restoring === 'busy'}
+                disabled={closedTouched.length > 0}
+              >
                 Відновити
               </Button>
             </Group>

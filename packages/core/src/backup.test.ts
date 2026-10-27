@@ -4,6 +4,7 @@ import {
   BACKUP_VERSION,
   backupToJson,
   buildBackup,
+  isClosingOp,
   parseBackup,
   restoreOps,
   restoreTouchesClosed,
@@ -372,11 +373,74 @@ describe('verifyBackup', () => {
 describe('restoreTouchesClosed', () => {
   const backup = buildBackup(live, 2026, now);
 
-  it('повертає закриті місяці, у які впишуться документи', () => {
-    expect(restoreTouchesClosed(backup, live.periods)).toEqual(['2026-03']);
+  it('у порожню базу: закриті місяці, у які впишуться документи', () => {
+    expect(restoreTouchesClosed(backup, { documents: [], periods: live.periods })).toEqual(['2026-03']);
+  });
+
+  it('документи без змін закритих місяців не зачіпають: Firestore пропускає повторний запис', () => {
+    expect(restoreTouchesClosed(backup, live)).toEqual([]);
+  });
+
+  it('документ, що відрізняється від бази, зачіпає свій закритий місяць', () => {
+    const changed = docs.map((d) => (d.id === 'fuel' ? { ...d, number: 'F 2' } : d));
+    expect(restoreTouchesClosed(backup, { documents: changed, periods: live.periods })).toEqual(['2026-03']);
   });
 
   it('відкриті місяці не вважаються', () => {
-    expect(restoreTouchesClosed(backup, { '2026-03': { status: 'open', confirmations: {} } })).toEqual([]);
+    expect(
+      restoreTouchesClosed(backup, { documents: [], periods: { '2026-03': { status: 'open', confirmations: {} } } }),
+    ).toEqual([]);
+  });
+});
+
+describe('touchedPeriods у бекапі', () => {
+  const stamped: BackupData = {
+    ...live,
+    documents: docs.map((d) => ({ ...d, touchedPeriods: ['2026-03'] }) as unknown as StoredDocument),
+  };
+
+  it('похідне поле у файл не йде', () => {
+    expect(buildBackup(stamped, 2026, now).documents.some((d) => 'touchedPeriods' in d)).toBe(false);
+  });
+
+  it('перевірка файла без поля проти бази з полем — збіг', () => {
+    expect(verifyBackup(buildBackup(live, 2026, now), stamped).identical).toBe(true);
+  });
+
+  it('відновлення проставляє поле заново з дат документа', () => {
+    const op = restoreOps(buildBackup(live, 2026, now)).find((o) => o.id === 'claude')!;
+    expect(op.data).toMatchObject({ touchedPeriods: ['2026-03'] });
+  });
+});
+
+describe('restoreOps: стан місяців і locks/periods', () => {
+  const backup = buildBackup(live, 2026, now);
+
+  it('стан місяців і список закритих — наприкінці, після документів', () => {
+    const ops = restoreOps(backup);
+    const firstClosing = ops.findIndex(isClosingOp);
+    expect(ops.slice(firstClosing).every(isClosingOp)).toBe(true);
+    expect(ops.map((o) => o.collection).lastIndexOf('documents')).toBeLessThan(firstClosing);
+    expect(ops.at(-1)).toEqual({ collection: 'locks', id: 'periods', data: { closed: ['2026-03'] } });
+  });
+
+  it('закриті місяці поза файлом лишаються закритими, а стан з файла має пріоритет', () => {
+    const lock = restoreOps(backup, {
+      '2025-11': { status: 'closed', confirmations: {} },
+      '2026-03': { status: 'open', confirmations: {} },
+      '2026-04': { status: 'closed', confirmations: {} },
+    }).at(-1)!;
+    expect(lock.data).toEqual({ closed: ['2025-11', '2026-03', '2026-04'] });
+  });
+
+  it('відкритий у файлі місяць прибирається зі списку закритих', () => {
+    const reopened = { ...backup, periods: { '2026-03': { status: 'open' as const, confirmations: {} } } };
+    expect(restoreOps(reopened, { '2026-03': { status: 'closed', confirmations: {} } }).at(-1)!.data).toEqual({
+      closed: [],
+    });
+  });
+
+  it('без стану місяців у файлі locks/periods не пишеться', () => {
+    expect(restoreOps({ ...backup, periods: {} }).some(isClosingOp)).toBe(false);
   });
 });
