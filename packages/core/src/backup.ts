@@ -251,21 +251,63 @@ export interface BackupVerification {
   identical: boolean;
   /** Опис розбіжностей, по колекціях */
   differences: string[];
+  /** Окремі записи, що розійшлися: що саме і де, по одному рядку на запис */
+  details: string[];
   /** Розрахунок року з файла дає ті самі місячні суми, що й поточний облік; null — не перевірялося */
   figuresMatch: boolean | null;
 }
 
-function diffRecords(label: string, fromFile: Record<string, unknown>, live: Record<string, unknown>): string[] {
+/** Рядок про документ для списку розбіжностей: дата, вид, номер, контрагент, netto */
+function describeDocument(id: string, value: unknown): string {
+  const doc = value as LedgerDocument | undefined;
+  if (!doc || doc.kind === 'internal' || !Array.isArray(doc.lines)) return id;
+  const net = doc.lines.reduce((sum, l) => sum + l.net, 0);
+  return [
+    doc.issueDate,
+    doc.kind === 'income' ? 'дохід' : 'витрата',
+    doc.number,
+    doc.contractor.name,
+    `netto ${(net / 100).toFixed(2)} ${doc.currency}`,
+  ].join(' · ');
+}
+
+/** Назви полів, значення яких у файлі й у базі різні */
+function changedFields(a: unknown, b: unknown): string[] {
+  if (!isRecord(a) || !isRecord(b)) return [];
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((k) => stableStringify(a[k]) !== stableStringify(b[k]))
+    .sort();
+}
+
+interface RecordDiff {
+  summary: string[];
+  details: string[];
+}
+
+function diffRecords(
+  label: string,
+  fromFile: Record<string, unknown>,
+  live: Record<string, unknown>,
+  describe: (id: string, value: unknown) => string = (id) => id,
+): RecordDiff {
   const missing = Object.keys(fromFile).filter((k) => !(k in live));
   const extra = Object.keys(live).filter((k) => !(k in fromFile));
   const changed = Object.keys(fromFile).filter(
     (k) => k in live && stableStringify(fromFile[k]) !== stableStringify(live[k]),
   );
-  const out: string[] = [];
-  if (missing.length) out.push(`${label}: у файлі є, у базі немає — ${missing.length}`);
-  if (extra.length) out.push(`${label}: у базі є, у файлі немає — ${extra.length}`);
-  if (changed.length) out.push(`${label}: відрізняються — ${changed.length}`);
-  return out;
+  const summary: string[] = [];
+  if (missing.length) summary.push(`${label}: у файлі є, у базі немає — ${missing.length}`);
+  if (extra.length) summary.push(`${label}: у базі є, у файлі немає — ${extra.length}`);
+  if (changed.length) summary.push(`${label}: відрізняються — ${changed.length}`);
+  const details = [
+    ...missing.map((k) => `${label}, у файлі є, у базі немає: ${describe(k, fromFile[k])}`),
+    ...extra.map((k) => `${label}, у базі є, у файлі немає: ${describe(k, live[k])}`),
+    ...changed.map(
+      (k) =>
+        `${label}, відрізняється: ${describe(k, live[k])} (поля: ${changedFields(fromFile[k], live[k]).join(', ') || 'значення'})`,
+    ),
+  ];
+  return { summary, details };
 }
 
 function yearFigures(data: BackupData, cfg: TaxYearConfig, emptySettings: YearSettings): string | null {
@@ -291,18 +333,21 @@ export function verifyBackup(
   options?: { cfg: TaxYearConfig; emptySettings: YearSettings },
 ): BackupVerification {
   const scoped = buildBackup(live, backup.year, new Date(backup.exportedAt));
-  const differences = [
-    ...diffRecords(
+  const diffs = [
+    diffRecords(
       'Документи',
       Object.fromEntries(backup.documents.map((d) => [d.id, withoutTouchedPeriods(d)])),
       Object.fromEntries(scoped.documents.map((d) => [d.id, d])),
+      describeDocument,
     ),
-    ...diffRecords('Еталон', backup.references, scoped.references),
-    ...diffRecords('Місяці', backup.periods, scoped.periods),
-    ...diffRecords('Правила контрагентів', backup.vendorRules, scoped.vendorRules),
-    ...diffRecords('Категорії документів', backup.categoryOverrides, scoped.categoryOverrides),
-    ...diffRecords('Курси NBP', backup.fxRates, scoped.fxRates),
+    diffRecords('Еталон', backup.references, scoped.references, (id) => `місяць ${id}`),
+    diffRecords('Місяці', backup.periods, scoped.periods, (id) => `місяць ${id}`),
+    diffRecords('Правила контрагентів', backup.vendorRules, scoped.vendorRules),
+    diffRecords('Категорії документів', backup.categoryOverrides, scoped.categoryOverrides),
+    diffRecords('Курси NBP', backup.fxRates, scoped.fxRates, (id) => `дата ${id}`),
   ];
+  const differences = diffs.flatMap((d) => d.summary);
+  const details = diffs.flatMap((d) => d.details);
   if (stableStringify(backup.settings) !== stableStringify(scoped.settings))
     differences.push('Налаштування року відрізняються');
 
@@ -312,5 +357,5 @@ export function verifyBackup(
     const fromLive = yearFigures(live, options.cfg, options.emptySettings);
     figuresMatch = fromFile !== null && fromFile === fromLive;
   }
-  return { identical: differences.length === 0, differences, figuresMatch };
+  return { identical: differences.length === 0, differences, details, figuresMatch };
 }
