@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   canClose,
+  closedPeriodList,
+  closedPeriodsAffected,
   closedPeriodsTouched,
   closedRecord,
   closingChecklist,
-  datesPeriods,
+  documentPeriods,
   isClosed,
+  needsStamp,
   reopenedRecord,
   snapshotDrift,
+  withoutTouchedPeriods,
+  withTouchedPeriods,
   type ChecklistInput,
   type PeriodRecord,
 } from './closing';
-import type { LedgerDocument } from './document';
+import type { CostDocument, LedgerDocument } from './document';
 import { calcYearFromDocuments } from './ledger';
 import type { MonthReport } from './reference';
 import { TAX_CONFIG, type YearSettings } from './tax';
@@ -172,15 +177,112 @@ describe('закриті місяці й документи', () => {
     expect(isClosed(periods, '2026-05')).toBe(false);
   });
 
-  it('datesPeriods: різні місяці PIT і VAT, без повторів і без VAT', () => {
-    expect(datesPeriods({ pit: '2026-03-31', vat: '2026-04-02' })).toEqual(['2026-03', '2026-04']);
-    expect(datesPeriods({ pit: '2026-03-31', vat: '2026-03-01' })).toEqual(['2026-03']);
-    expect(datesPeriods({ pit: '2026-03-31', vat: null })).toEqual(['2026-03']);
+  const cost = (over: Partial<CostDocument> = {}): CostDocument => ({
+    kind: 'cost',
+    category: 'office',
+    number: 'F 1',
+    issueDate: '2026-03-10',
+    contractor: { name: 'Firma', nip: '1111111111', country: 'PL' },
+    currency: 'PLN',
+    lines: [{ net: 10_000, vatRate: '23', vat: 2_300 }],
+    source: 'manual',
+    ...over,
+  });
+  const eur = (over: Partial<CostDocument> = {}) =>
+    cost({ currency: 'EUR', category: 'other', lines: [{ net: 10_000, vatRate: 'np' }], ...over });
+
+  it('documentPeriods: PIT і VAT в одному місяці — один місяць', () => {
+    expect(documentPeriods(cost())).toEqual(['2026-03']);
   });
 
-  it('документ торкається закритого місяця за PIT або за VAT', () => {
-    expect(closedPeriodsTouched({ pit: '2026-03-10', vat: '2026-05-01' }, periods)).toEqual(['2026-03']);
-    expect(closedPeriodsTouched({ pit: '2026-05-10', vat: '2026-03-01' }, periods)).toEqual(['2026-03']);
-    expect(closedPeriodsTouched({ pit: '2026-04-10', vat: null }, periods)).toEqual([]);
+  it('documentPeriods: фактура отримана в наступному місяці — PIT і VAT різні', () => {
+    expect(documentPeriods(cost({ issueDate: '2026-03-31', receivedDate: '2026-04-02' }))).toEqual([
+      '2026-03',
+      '2026-04',
+    ]);
+  });
+
+  it('documentPeriods: внутрішній документ — лише KPiR', () => {
+    const internal: LedgerDocument = {
+      kind: 'internal',
+      number: 'DW 1',
+      issueDate: '2026-05-31',
+      column: 15,
+      amount: 100,
+      source: 'manual',
+    };
+    expect(documentPeriods(internal)).toEqual(['2026-05']);
+  });
+
+  it('documentPeriods: валютний документ — ще й місяць оплати (курсова різниця)', () => {
+    expect(documentPeriods(eur({ paidAt: '2026-05-04' }))).toEqual(['2026-03', '2026-05']);
+    expect(documentPeriods(eur({ issueDate: '2026-03-30', vatDate: '2026-04-01', paidAt: '2026-05-04' }))).toEqual([
+      '2026-03',
+      '2026-04',
+      '2026-05',
+    ]);
+  });
+
+  it('documentPeriods: оплата документа в PLN місяця не додає', () => {
+    expect(documentPeriods(cost({ paidAt: '2026-05-04' }))).toEqual(['2026-03']);
+  });
+
+  it('documentPeriods: перевизначені дати PIT і VAT', () => {
+    expect(documentPeriods(cost({ pitDate: '2026-02-28', vatDate: '2026-06-01' }))).toEqual(['2026-02', '2026-06']);
+  });
+
+  it('документ торкається закритого місяця за PIT, VAT або оплатою', () => {
+    expect(closedPeriodsTouched(cost({ vatDate: '2026-05-01' }), periods)).toEqual(['2026-03']);
+    expect(closedPeriodsTouched(cost({ issueDate: '2026-05-10', vatDate: '2026-03-01' }), periods)).toEqual([
+      '2026-03',
+    ]);
+    expect(closedPeriodsTouched(cost({ issueDate: '2026-04-10' }), periods)).toEqual([]);
+    expect(closedPeriodsTouched(eur({ issueDate: '2026-04-10', paidAt: '2026-03-02' }), periods)).toEqual(['2026-03']);
+  });
+
+  it('withTouchedPeriods проставляє поле заново, withoutTouchedPeriods прибирає', () => {
+    const stale = { ...cost(), touchedPeriods: ['2020-01'] };
+    expect(withTouchedPeriods(stale).touchedPeriods).toEqual(['2026-03']);
+    expect('touchedPeriods' in withoutTouchedPeriods(stale)).toBe(false);
+  });
+
+  it('needsStamp: немає поля або воно застаріле', () => {
+    expect(needsStamp(cost())).toBe(true);
+    expect(needsStamp({ ...cost(), touchedPeriods: ['2026-04'] })).toBe(true);
+    expect(needsStamp(withTouchedPeriods(cost()))).toBe(false);
+  });
+
+  describe('closedPeriodsAffected', () => {
+    it('новий документ у закритий місяць', () => {
+      expect(closedPeriodsAffected(cost(), undefined, periods)).toEqual(['2026-03']);
+    });
+
+    it('повторний запис тих самих даних нічого не зачіпає, з полем чи без', () => {
+      expect(closedPeriodsAffected(cost(), withTouchedPeriods(cost()), periods)).toEqual([]);
+      expect(closedPeriodsAffected(withTouchedPeriods(cost()), cost(), periods)).toEqual([]);
+    });
+
+    it('зміна документа закритого місяця', () => {
+      expect(closedPeriodsAffected(cost({ number: 'F 2' }), cost(), periods)).toEqual(['2026-03']);
+    });
+
+    it('перенесення з закритого місяця у відкритий зачіпає закритий', () => {
+      expect(closedPeriodsAffected(cost({ issueDate: '2026-04-10' }), cost(), periods)).toEqual(['2026-03']);
+    });
+
+    it('видалення', () => {
+      expect(closedPeriodsAffected(null, cost(), periods)).toEqual(['2026-03']);
+      expect(closedPeriodsAffected(null, cost({ issueDate: '2026-04-01' }), periods)).toEqual([]);
+    });
+  });
+
+  it('closedPeriodList: лише закриті, за зростанням', () => {
+    expect(
+      closedPeriodList({
+        '2026-05': { status: 'closed', confirmations: {} },
+        ...periods,
+        '2026-01': { status: 'closed', confirmations: {} },
+      }),
+    ).toEqual(['2026-01', '2026-03', '2026-05']);
   });
 });

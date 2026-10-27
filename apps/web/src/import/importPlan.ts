@@ -1,4 +1,5 @@
 import {
+  closedPeriodsAffected,
   documentDates,
   documentsFromJpk,
   importablePurchase,
@@ -16,6 +17,7 @@ import {
   type JpkV7M,
   type LedgerDocument,
   type MonthReference,
+  type PeriodRecord,
 } from '@jdg/core';
 
 /** Вибраний файл після розбору: JPK або помилка, з якою його не можна імпортувати */
@@ -116,6 +118,23 @@ function purchaseRows(jpk: JpkV7M, rules: ContractorRules, overrides: CategoryOv
     rows.set(id, plan);
   }
   return [...rows.values()];
+}
+
+/**
+ * Закриті місяці, які імпорт змінив би: нові чи змінені документи й видалення (корекція), що їх торкаються.
+ * Firestore такий пакет відхилить цілком; документи без змін (повторний імпорт того самого файла) проходять.
+ */
+export function importClosedPeriods(
+  plan: Pick<ImportPlan, 'documents' | 'stale'>,
+  existing: readonly (LedgerDocument & { id: string })[],
+  periods: Readonly<Record<string, PeriodRecord>>,
+): string[] {
+  const byId = new Map(existing.map((d) => [d.id, d]));
+  const touched = [
+    ...plan.documents.flatMap((d) => closedPeriodsAffected(d, byId.get(d.id), periods)),
+    ...plan.stale.flatMap((id) => closedPeriodsAffected(null, byId.get(id), periods)),
+  ];
+  return [...new Set(touched)].sort();
 }
 
 export function buildImportPlan(

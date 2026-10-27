@@ -2,7 +2,9 @@ import {
   canClose,
   closedRecord,
   closingChecklist,
+  documentPeriods,
   isClosed,
+  needsStamp,
   reopenedRecord,
   snapshotDrift,
   TAX_CONFIG,
@@ -15,7 +17,16 @@ import { Alert, Anchor, Badge, Button, Checkbox, Group, Loader, Modal, Stack, Ta
 import { useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
-import { savePeriod, useReferences, useYearSettings } from '../data/hooks';
+import {
+  closePeriod,
+  reopenPeriod,
+  savePeriod,
+  syncPeriodLock,
+  useLockedPeriods,
+  useReferences,
+  useYearSettings,
+} from '../data/hooks';
+import { writeErrorMessage } from '../data/writeError';
 import { formatPln } from '../format';
 import { EMPTY_SETTINGS } from '../settings/settingsForm';
 import { formatDate, localIsoDate, monthDocuments } from './accountingView';
@@ -73,6 +84,7 @@ export function ClosePage() {
   const ledger = useLedgerYear(ledgerYear);
   const settings = useYearSettings(ledgerYear);
   const references = useReferences();
+  const locked = useLockedPeriods();
   const { state: auth } = useAuth();
   const uid = auth.status === 'signedIn' ? auth.user.uid : null;
   const [dialog, setDialog] = useState<'close' | 'reopen' | null>(null);
@@ -115,6 +127,10 @@ export function ClosePage() {
   const ready = canClose(items);
   const drift = closed && record.snapshot && result ? snapshotDrift(record.snapshot, result) : [];
   const laterClosed = laterClosedPeriods(ledger.periods, period);
+  // документи місяця, яким firestore.rules ще не можуть перевірити місяць (записані до правила)
+  const unstamped = ledger.docs.filter((d) => documentPeriods(d).includes(period) && needsStamp(d));
+  // захист у базі (locks/periods) розійшовся зі станом місяця: закрито до появи захисту чи змінено в обхід
+  const lockMismatch = locked.status === 'ready' && closed !== (locked.data ?? []).includes(period);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -123,7 +139,7 @@ export function ClosePage() {
       await action();
       setDialog(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(writeErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -137,12 +153,19 @@ export function ClosePage() {
   const close = () => {
     if (!uid || !result) return Promise.resolve();
     const count = monthDocuments(ledger.docs, year, month, ledger.fx).length;
-    return run(() => savePeriod(uid, period, closedRecord(result, record.confirmations, count, new Date())));
+    return run(() =>
+      closePeriod(uid, period, closedRecord(result, record.confirmations, count, new Date()), unstamped),
+    );
   };
 
   const reopen = () => {
     if (!uid) return Promise.resolve();
-    return run(() => savePeriod(uid, period, reopenedRecord(record, new Date())));
+    return run(() => reopenPeriod(uid, period, reopenedRecord(record, new Date())));
+  };
+
+  const syncLock = () => {
+    if (!uid) return;
+    void run(() => syncPeriodLock(uid, period, closed, closed ? unstamped : []));
   };
 
   return (
@@ -164,6 +187,20 @@ export function ClosePage() {
       {error && (
         <Alert color="red" role="alert">
           Не вдалося зберегти: {error}
+        </Alert>
+      )}
+      {lockMismatch && (
+        <Alert color="orange" title="Захист місяця в базі не збігається зі станом" role="alert">
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">
+              {closed
+                ? 'Місяць закрито, але база ще не забороняє змінювати його документи (закрито до появи захисту).'
+                : 'Місяць відкрито, але база досі забороняє змінювати його документи.'}
+            </Text>
+            <Button size="xs" variant="default" disabled={!uid || busy} onClick={syncLock}>
+              {closed ? 'Увімкнути захист' : 'Зняти захист'}
+            </Button>
+          </Stack>
         </Alert>
       )}
 

@@ -67,9 +67,12 @@ export function MonthPage() {
   const result = ledger.results?.[month - 1];
   const rows = monthDocuments(ledger.docs, year, month, ledger.fx);
   const monthClosed = isClosed(ledger.periods, periodKey(year, month));
-  // документ, що потрапляє хоч в один закритий місяць (PIT чи VAT), не видаляється
-  const locked = (d: MonthDocumentRow) =>
-    closedPeriodsTouched({ pit: d.pitDate, vat: d.vatDate }, ledger.periods).length > 0;
+  // документ, що потрапляє хоч в один закритий місяць (PIT, VAT чи оплата), не видаляється
+  const docsById = new Map(ledger.docs.map((d) => [d.id, d]));
+  const locked = (d: MonthDocumentRow) => {
+    const doc = docsById.get(d.id);
+    return doc !== undefined && closedPeriodsTouched(doc, ledger.periods).length > 0;
+  };
 
   return (
     <Stack maw={1100}>

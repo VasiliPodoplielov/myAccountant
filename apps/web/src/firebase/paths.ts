@@ -22,6 +22,8 @@ export const paths = {
   periodsCollection: (uid: string): Path => [...userRoot(uid), 'periods'],
   /** Стан місяця 'YYYY-MM': відкритий чи закритий, знімок сум */
   period: (uid: string, period: string): Path => [...userRoot(uid), 'periods', period],
+  /** Список закритих місяців { closed: ['YYYY-MM', ...] }: його читають firestore.rules */
+  periodLock: (uid: string): Path => [...userRoot(uid), 'locks', 'periods'],
   /** Довільний запис колекції користувача: для відновлення з бекапу (id уже закодований) */
   entry: (uid: string, collection: string, id: string): Path => [...userRoot(uid), collection, id],
 };

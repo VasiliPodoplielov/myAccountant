@@ -4,6 +4,8 @@
  * не додаються й не видаляються без явного повторного відкриття (корекції).
  */
 
+import { documentDates, type LedgerDocument } from './document';
+import { stableStringify } from './json';
 import { isReconciled, type MonthReport, type ReferencePart } from './reference';
 import type { MonthResult } from './tax';
 
@@ -168,16 +170,74 @@ export function snapshotDrift(snapshot: MonthResult, current: MonthResult): Snap
   return drift;
 }
 
-type EventDates = { pit: string; vat: string | null };
+// ---------------------------------------------------------------- documents and closed months
 
-/** Місяці 'YYYY-MM', у яких документ з'являється: KPiR (дата PIT) і реєстр VAT */
-export const datesPeriods = (dates: EventDates): string[] => [
-  ...new Set([dates.pit.slice(0, 7), dates.vat?.slice(0, 7)].filter((p): p is string => !!p)),
-];
+const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** Закриті місяці, яких торкається документ, за його датами PIT і VAT */
-export function closedPeriodsTouched(dates: EventDates, periods: Readonly<Record<string, PeriodRecord>>): string[] {
-  return datesPeriods(dates)
-    .filter((p) => isClosed(periods, p))
+/**
+ * Місяці 'YYYY-MM', яких торкається документ: KPiR за датою PIT, реєстр VAT і, для валютного документа,
+ * місяць оплати (курсова різниця йде в KPiR днем оплати). Від одного до трьох, за зростанням.
+ */
+export function documentPeriods(doc: LedgerDocument): string[] {
+  const dates = documentDates(doc);
+  const paidAt = doc.kind !== 'internal' && doc.currency !== 'PLN' ? doc.paidAt : undefined;
+  return [...new Set([dates.pit, dates.vat, paidAt].flatMap((d) => (d ? [d.slice(0, 7)] : [])))]
+    .filter((p) => PERIOD.test(p))
     .sort();
 }
+
+/** Закриті місяці, яких торкається документ */
+export function closedPeriodsTouched(doc: LedgerDocument, periods: Readonly<Record<string, PeriodRecord>>): string[] {
+  return documentPeriods(doc).filter((p) => isClosed(periods, p));
+}
+
+/**
+ * Документ у Firestore несе touchedPeriods = documentPeriods(doc): за ним firestore.rules не пускають запис,
+ * що торкається закритого місяця (правила самі дат події не рахують). Поле похідне, тому проставляється при
+ * кожному записі й не йде в бекап.
+ */
+export type StampedDocument<T extends LedgerDocument = LedgerDocument> = T & { touchedPeriods: string[] };
+
+/** Документ із полем, порахованим заново (застаріле значення замінюється) */
+export function withTouchedPeriods<T extends LedgerDocument>(doc: T): StampedDocument<T> {
+  return { ...doc, touchedPeriods: documentPeriods(doc) };
+}
+
+export function withoutTouchedPeriods<T extends object>(doc: T): Omit<T, 'touchedPeriods'> {
+  const copy: Partial<T> & { touchedPeriods?: unknown } = { ...doc };
+  delete copy.touchedPeriods;
+  return copy as Omit<T, 'touchedPeriods'>;
+}
+
+/** Документ, у якого поля touchedPeriods немає або воно не збігається з датами (записаний до правила) */
+export function needsStamp(doc: LedgerDocument & { touchedPeriods?: unknown }): boolean {
+  return stableStringify(doc.touchedPeriods) !== stableStringify(documentPeriods(doc));
+}
+
+/**
+ * Закриті місяці, які зачепить запис документа next замість наявного existing (next = null — видалення).
+ * Повторний запис тих самих даних нічого не зачіпає: так повторний імпорт JPK закритого місяця проходить.
+ * Те саме перевіряють firestore.rules; тут — щоб показати причину до запису.
+ */
+export function closedPeriodsAffected(
+  next: LedgerDocument | null,
+  existing: LedgerDocument | undefined,
+  periods: Readonly<Record<string, PeriodRecord>>,
+): string[] {
+  if (next && existing && sameDocument(next, existing)) return [];
+  const touched = [
+    ...(next ? closedPeriodsTouched(next, periods) : []),
+    ...(existing ? closedPeriodsTouched(existing, periods) : []),
+  ];
+  return [...new Set(touched)].sort();
+}
+
+/** Ті самі дані без урахування похідного touchedPeriods */
+export const sameDocument = (a: LedgerDocument, b: LedgerDocument) =>
+  stableStringify(withoutTouchedPeriods(a)) === stableStringify(withoutTouchedPeriods(b));
+
+/** Закриті місяці за зростанням: вміст locks/periods { closed } */
+export const closedPeriodList = (periods: Readonly<Record<string, PeriodRecord>>): string[] =>
+  Object.keys(periods)
+    .filter((p) => isClosed(periods, p))
+    .sort();

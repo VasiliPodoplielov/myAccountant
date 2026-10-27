@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   eur: {} as Record<string, number>,
   periods: {} as Record<string, unknown>,
   periodsState: null as unknown,
+  docs: [] as unknown[],
 }));
 
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => mocks.auth }));
@@ -19,6 +20,7 @@ vi.mock('../data/hooks', () => ({
   saveDocument: mocks.saveDocument,
   useFxRates: (currency: string) => ({ status: 'ready', data: currency === 'EUR' ? mocks.eur : EMPTY }),
   usePeriods: () => mocks.periodsState ?? { status: 'ready', data: mocks.periods },
+  useDocuments: () => ({ status: 'ready', data: mocks.docs }),
 }));
 vi.mock('../data/fxSync', () => ({ syncFxRates: mocks.syncFxRates }));
 
@@ -36,6 +38,7 @@ beforeEach(() => {
   mocks.eur = {};
   mocks.periods = {};
   mocks.periodsState = null;
+  mocks.docs = [];
 });
 afterEach(cleanup);
 
@@ -288,6 +291,40 @@ describe('форма «Додати документ»', () => {
     await user.click(screen.getByRole('button', { name: 'Офіс' }));
     expect(screen.queryByText('Для np — сума netto з рахунку; VAT не відлічується і в koszty не йде')).toBeNull();
     expect(field('Країна контрагента').value).toBe('PL');
+  });
+});
+
+describe('дубль документа', () => {
+  const existing = {
+    id: 'old',
+    kind: 'cost',
+    category: 'other',
+    number: 'FV 1/10/2026',
+    issueDate: '2026-10-05',
+    contractor: { name: 'Test Sp. z o.o.', country: 'PL' },
+    currency: 'PLN',
+    lines: [{ net: 9_685, vatRate: '23' }],
+    source: 'manual',
+  };
+
+  it('той самий номер і контрагент: попередження з посиланням на місяць документа, збереження не заборонено', async () => {
+    mocks.docs = [existing];
+    const user = setup();
+    setDate('Дата виставлення', '2026-11-03');
+    await fillBasics(user);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Такий документ уже є');
+    expect(alert.textContent).toContain('96,85');
+    expect(within(alert).getByRole('link').getAttribute('href')).toBe('/month/2026/10');
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('інший номер чи контрагент: попередження немає', async () => {
+    mocks.docs = [{ ...existing, contractor: { name: 'Інша фірма', country: 'PL' } }];
+    const user = setup();
+    await fillBasics(user);
+    expect(screen.queryByText('Такий документ уже є')).toBeNull();
   });
 });
 

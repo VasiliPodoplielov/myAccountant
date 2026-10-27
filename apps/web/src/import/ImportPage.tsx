@@ -29,9 +29,10 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
-import { saveJpkImport, useCategoryOverrides, useDocuments, useVendorRules } from '../data/hooks';
+import { saveJpkImport, useCategoryOverrides, useDocuments, usePeriods, useVendorRules } from '../data/hooks';
+import { writeErrorMessage } from '../data/writeError';
 import { formatPln } from '../format';
-import { buildImportPlan, parseFile, type FilePlan, type ParsedFile } from './importPlan';
+import { buildImportPlan, importClosedPeriods, parseFile, type FilePlan, type ParsedFile } from './importPlan';
 
 /** Категорії, які можна призначити витраті з JPK: import usług у JPK бухгалтера не подається */
 const CATEGORY_OPTIONS: { value: CostCategory; label: string }[] = [
@@ -239,6 +240,7 @@ export function ImportPage() {
   const docsState = useDocuments();
   const rulesState = useVendorRules();
   const overridesState = useCategoryOverrides();
+  const periodsState = usePeriods();
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [ruleEdits, setRuleEdits] = useState<ContractorRules>({});
   /** Змінені категорії документів; null — повернути до правила контрагента */
@@ -274,11 +276,17 @@ export function ImportPage() {
     [files, rules, hints, existing, overrides],
   );
 
-  const loadError = [docsState, rulesState, overridesState].find((s) => s.status === 'error');
+  // документи, що торкаються закритого місяця, Firestore не запише: імпорт вимикається до запису
+  const closedMonths = useMemo(
+    () => (periodsState.status === 'ready' ? importClosedPeriods(plan, existing, periodsState.data) : []),
+    [plan, existing, periodsState],
+  );
+
+  const loadError = [docsState, rulesState, overridesState, periodsState].find((s) => s.status === 'error');
   if (loadError?.status === 'error') {
     return <Alert color="red">Не вдалося прочитати дані: {loadError.error.message}</Alert>;
   }
-  if ([docsState, rulesState, overridesState].some((s) => s.status === 'loading')) {
+  if ([docsState, rulesState, overridesState, periodsState].some((s) => s.status === 'loading')) {
     return <Loader aria-label="Завантаження" />;
   }
 
@@ -325,7 +333,7 @@ export function ImportPage() {
       setOverrideEdits({});
       setSave({ kind: 'done', count: plan.documents.length });
     } catch (e) {
-      setSave({ kind: 'error', message: (e as Error).message });
+      setSave({ kind: 'error', message: writeErrorMessage(e) });
     }
   };
 
@@ -432,7 +440,11 @@ export function ImportPage() {
 
       {plan.files.length > 0 && (
         <Group>
-          <Button onClick={() => void onImport()} disabled={!plan.ready || !uid} loading={save.kind === 'saving'}>
+          <Button
+            onClick={() => void onImport()}
+            disabled={!plan.ready || !uid || closedMonths.length > 0}
+            loading={save.kind === 'saving'}
+          >
             Імпортувати документи: {plan.documents.length}
           </Button>
           {!plan.ready && missing.size > 0 && (
@@ -441,6 +453,12 @@ export function ImportPage() {
             </Text>
           )}
         </Group>
+      )}
+      {closedMonths.length > 0 && (
+        <Alert color="orange" title="Місяць закрито" role="alert">
+          Імпорт змінює документи закритих місяців ({closedMonths.join(', ')}). Відкрийте їх знову на екрані «Закриття»,
+          якщо це корекція, і закрийте після перевірки.
+        </Alert>
       )}
       {save.kind === 'done' && (
         <Alert color="green" title="Імпортовано">

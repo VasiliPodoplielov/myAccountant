@@ -1,6 +1,6 @@
 import { jpkDocumentId, type LedgerDocument } from '@jdg/core';
 import { describe, expect, it } from 'vitest';
-import { buildImportPlan, parseFile, staleImported } from './importPlan';
+import { buildImportPlan, importClosedPeriods, parseFile, staleImported } from './importPlan';
 
 /** Мінімальний JPK_V7M(3): дані вигадані */
 function jpk(month: number, purchases: string[], sales: string[] = [], purpose = 1) {
@@ -156,5 +156,31 @@ describe('застарілі документи імпорту', () => {
       doc('manual-d', '2026-03-07'),
     ];
     expect(staleImported(existing, '2026-03', new Set(['jpk-cost-b']))).toEqual(['jpk-cost-a']);
+  });
+});
+
+describe('імпорт і закриті місяці', () => {
+  const rules = { '2222222222': { category: 'office' as const } };
+  const plan = buildImportPlan([march], rules, {}, []);
+  const closed = { '2026-03': { status: 'closed' as const, confirmations: {} } };
+
+  it('нові документи в закритий місяць', () => {
+    expect(importClosedPeriods(plan, [], closed)).toEqual(['2026-03']);
+  });
+
+  it('повторний імпорт того самого файла нічого не змінює, навіть з полем touchedPeriods у базі', () => {
+    const stored = plan.documents.map((d) => ({ ...d, touchedPeriods: ['2026-03'] }));
+    expect(importClosedPeriods(plan, stored, closed)).toEqual([]);
+  });
+
+  it('змінений документ і видалення корекцією зачіпають закритий місяць', () => {
+    const changed = plan.documents.map((d, i) => (i === 0 ? { ...d, number: 'ІНШИЙ' } : d));
+    expect(importClosedPeriods(plan, changed, closed)).toEqual(['2026-03']);
+    const removed = plan.documents.find((d) => d.kind === 'cost')!;
+    expect(importClosedPeriods({ documents: [], stale: [removed.id] }, plan.documents, closed)).toEqual(['2026-03']);
+  });
+
+  it('відкритий місяць не заважає', () => {
+    expect(importClosedPeriods(plan, [], { '2026-03': { status: 'open', confirmations: {} } })).toEqual([]);
   });
 });

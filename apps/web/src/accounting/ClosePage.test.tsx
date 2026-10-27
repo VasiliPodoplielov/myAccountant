@@ -40,7 +40,12 @@ const MARCH_REFERENCE: MonthReference = {
 const mocks = vi.hoisted(() => ({
   auth: { state: { status: 'signedIn', user: { uid: 'u1' } } } as { state: { status: string; user?: { uid: string } } },
   savePeriod: vi.fn(),
+  closePeriod: vi.fn(),
+  reopenPeriod: vi.fn(),
+  syncPeriodLock: vi.fn(),
   periods: {} as Record<string, unknown>,
+  /** locks/periods; undefined — як у periods (захист узгоджений) */
+  locked: undefined as string[] | null | undefined,
   references: {} as Record<string, unknown>,
   results: null as unknown,
   hasSettings: true,
@@ -49,6 +54,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => mocks.auth }));
 vi.mock('../data/hooks', () => ({
   savePeriod: mocks.savePeriod,
+  closePeriod: mocks.closePeriod,
+  reopenPeriod: mocks.reopenPeriod,
+  syncPeriodLock: mocks.syncPeriodLock,
+  useLockedPeriods: () => ({
+    status: 'ready',
+    data:
+      mocks.locked !== undefined
+        ? mocks.locked
+        : Object.entries(mocks.periods)
+            .filter(([, r]) => (r as PeriodRecord).status === 'closed')
+            .map(([p]) => p),
+  }),
   useYearSettings: () => ({ status: 'ready', data: null }),
   useReferences: () => ({ status: 'ready', data: mocks.references }),
 }));
@@ -80,6 +97,10 @@ beforeAll(installDomPolyfills);
 beforeEach(() => {
   mocks.auth.state = { status: 'signedIn', user: { uid: 'u1' } };
   mocks.savePeriod.mockReset().mockResolvedValue(undefined);
+  mocks.closePeriod.mockReset().mockResolvedValue(undefined);
+  mocks.reopenPeriod.mockReset().mockResolvedValue(undefined);
+  mocks.syncPeriodLock.mockReset().mockResolvedValue(undefined);
+  mocks.locked = undefined;
   mocks.periods = { '2026-02': closed() };
   mocks.references = { '2026-03': MARCH_REFERENCE };
   mocks.results = results;
@@ -179,7 +200,7 @@ describe('закриття', () => {
     expect(within(dialog).getByRole('table', { name: 'Суми для закриття' })).toBeTruthy();
     await user.click(within(dialog).getByRole('button', { name: 'Скасувати' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(mocks.savePeriod).not.toHaveBeenCalled();
+    expect(mocks.closePeriod).not.toHaveBeenCalled();
   });
 
   it('підтвердження пише закритий запис зі знімком і кількістю документів', async () => {
@@ -187,22 +208,39 @@ describe('закриття', () => {
     await user.click(closeButton());
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Закрити' }));
-    await waitFor(() => expect(mocks.savePeriod).toHaveBeenCalledTimes(1));
-    const [uid, period, record] = mocks.savePeriod.mock.calls[0]!;
+    await waitFor(() => expect(mocks.closePeriod).toHaveBeenCalledTimes(1));
+    const [uid, period, record] = mocks.closePeriod.mock.calls[0]!;
     expect(uid).toBe('u1');
     expect(period).toBe('2026-03');
     expect(record).toMatchObject({ status: 'closed', confirmations: CONFIRMED, documentCount: 1 });
     expect(record.snapshot).toEqual(results[2]);
     expect(typeof record.closedAt).toBe('string');
+    expect(mocks.savePeriod).not.toHaveBeenCalled();
   });
 
-  it('помилка запису показується, діалог лишається', async () => {
-    mocks.savePeriod.mockRejectedValue(new Error('permission-denied'));
+  it('документам місяця без touchedPeriods поле проставляється при закритті', async () => {
     const user = setup();
     await user.click(closeButton());
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Закрити' }));
-    expect((await screen.findAllByText(/Не вдалося зберегти: permission-denied/)).length).toBeGreaterThan(0);
+    await waitFor(() => expect(mocks.closePeriod).toHaveBeenCalledTimes(1));
+    expect(mocks.closePeriod.mock.calls[0]![3]).toEqual([sale]);
+  });
+
+  it('відмова правил: зрозуміле пояснення, діалог лишається', async () => {
+    mocks.closePeriod.mockRejectedValue(Object.assign(new Error('Missing permissions'), { code: 'permission-denied' }));
+    const user = setup();
+    await user.click(closeButton());
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Закрити' }));
+    expect((await screen.findAllByText(/Firestore відхилив запис/)).length).toBeGreaterThan(0);
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('інша помилка запису показується як є', async () => {
+    mocks.closePeriod.mockRejectedValue(new Error('offline'));
+    const user = setup();
+    await user.click(closeButton());
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Закрити' }));
+    expect((await screen.findAllByText(/Не вдалося зберегти: offline/)).length).toBeGreaterThan(0);
   });
 });
 
@@ -232,8 +270,8 @@ describe('закритий місяць', () => {
     await user.click(screen.getByRole('button', { name: 'Відкрити знову (корекція)' }));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Відкрити' }));
-    await waitFor(() => expect(mocks.savePeriod).toHaveBeenCalledTimes(1));
-    const record = mocks.savePeriod.mock.calls[0]![2];
+    await waitFor(() => expect(mocks.reopenPeriod).toHaveBeenCalledTimes(1));
+    const record = mocks.reopenPeriod.mock.calls[0]![2];
     expect(record).toMatchObject({ status: 'open', confirmations: CONFIRMED });
     expect('snapshot' in record).toBe(false);
     expect(typeof record.reopenedAt).toBe('string');
@@ -244,6 +282,31 @@ describe('закритий місяць', () => {
     const user = setup();
     await user.click(screen.getByRole('button', { name: 'Відкрити знову (корекція)' }));
     expect((await screen.findByRole('dialog')).textContent).toContain('2026-04');
+  });
+});
+
+describe('захист місяця в базі (locks/periods)', () => {
+  it('стан збігається: попередження немає', () => {
+    mocks.periods = { '2026-02': closed(), '2026-03': closed() };
+    setup();
+    expect(screen.queryByText(/Захист місяця в базі/)).toBeNull();
+  });
+
+  it('місяць закрито до появи захисту: кнопка вмикає захист і проставляє поле документам', async () => {
+    mocks.periods = { '2026-02': closed(), '2026-03': closed() };
+    mocks.locked = null;
+    const user = setup();
+    expect(screen.getByText(/база ще не забороняє/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Увімкнути захист' }));
+    await waitFor(() => expect(mocks.syncPeriodLock).toHaveBeenCalledWith('u1', '2026-03', true, [sale]));
+  });
+
+  it('місяць відкрито, а захист лишився: кнопка знімає захист', async () => {
+    mocks.periods = { '2026-02': closed(), '2026-03': { status: 'open', confirmations: {} } };
+    mocks.locked = ['2026-02', '2026-03'];
+    const user = setup();
+    await user.click(screen.getByRole('button', { name: 'Зняти захист' }));
+    await waitFor(() => expect(mocks.syncPeriodLock).toHaveBeenCalledWith('u1', '2026-03', false, []));
   });
 });
 

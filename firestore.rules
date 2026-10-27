@@ -19,12 +19,60 @@ service cloud.firestore {
       return request.auth.uid == uid && isAllowlisted();
     }
 
-    // Колекції користувача з повним доступом власника. ksefInbox свідомо не тут.
+    // Колекції користувача з повним доступом власника. documents, periods, locks і ksefInbox мають свої правила нижче.
     function isOwnedCollection(name) {
       return name in [
-        'settings', 'documents', 'fixedAssets', 'periods',
+        'settings', 'fixedAssets',
         'filings', 'reference', 'vendorRules', 'categoryOverrides', 'fxRates'
       ];
+    }
+
+    // ---- Закриті місяці (етап 8)
+    // Список закритих місяців лежить в одному документі locks/periods { closed: ['YYYY-MM', ...] }: так кожен запис
+    // документа читає один документ, а не по одному на місяць (ліміт звернень правил — 10 на запис, 20 на пакет).
+    // Правило для periods/{yyyy-mm} тримає його в згоді зі станом місяця: закриття й відкриття пишуть обидва
+    // в одному пакеті.
+    // Документ несе поле touchedPeriods: місяці, яких він торкається (KPiR за датою PIT, реєстр VAT, курсова
+    // різниця в місяці оплати). Рахує його @jdg/core (documentPeriods) при кожному записі: правила дат події тут
+    // не відтворити.
+
+    function lockPath(uid) {
+      return /databases/$(database)/documents/users/$(uid)/locks/periods;
+    }
+
+    // закриті місяці до запису
+    function closedPeriods(uid) {
+      return exists(lockPath(uid)) ? get(lockPath(uid)).data.get('closed', []) : [];
+    }
+
+    // закриті місяці після запису (для запису стану місяця в одному пакеті з locks/periods)
+    function closedPeriodsAfter(uid) {
+      return existsAfter(lockPath(uid)) ? getAfter(lockPath(uid)).data.get('closed', []) : [];
+    }
+
+    function isPeriod(p) {
+      return p is string && p.matches('^[0-9]{4}-(0[1-9]|1[0-2])$');
+    }
+
+    // від одного до трьох місяців: PIT, VAT, оплата
+    function validPeriods(ps) {
+      return ps is list && ps.size() >= 1 && ps.size() <= 3
+        && isPeriod(ps[0])
+        && (ps.size() < 2 || isPeriod(ps[1]))
+        && (ps.size() < 3 || isPeriod(ps[2]));
+    }
+
+    function anyClosed(uid, ps) {
+      return ps.hasAny(closedPeriods(uid));
+    }
+
+    // документ, записаний до появи поля, нічого не захищає: для нього береться порожній список
+    function storedPeriods() {
+      return resource.data.get('touchedPeriods', []);
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
     }
 
     match /meta/{doc} {
@@ -33,6 +81,41 @@ service cloud.firestore {
 
     match /users/{uid}/{collection}/{id} {
       allow read, write: if isOwnedCollection(collection) && isOwner(uid);
+    }
+
+    // Стан місяця: 'closed' лише разом із місяцем у locks/periods, 'open' (і видалення) — лише без нього
+    match /users/{uid}/periods/{period} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && isPeriod(period)
+        && request.resource.data.status in ['open', 'closed']
+        && (request.resource.data.status == 'closed') == (period in closedPeriodsAfter(uid));
+      allow delete: if isOwner(uid) && !(period in closedPeriodsAfter(uid));
+    }
+
+    match /users/{uid}/locks/periods {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && request.resource.data.closed is list;
+      allow delete: if isOwner(uid);
+    }
+
+    // Документ, що торкається закритого місяця, не створюється, не змінюється, не видаляється й не
+    // переноситься в інший місяць. Дозволено лише повторний запис без змін (повторний імпорт JPK) і дописати
+    // touchedPeriods документу, у якого його ще немає (закриття місяця проставляє поле старим документам).
+    match /users/{uid}/documents/{id} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && validPeriods(request.resource.data.get('touchedPeriods', null))
+        && !anyClosed(uid, request.resource.data.touchedPeriods);
+      allow update: if isOwner(uid) && (
+        changedKeys().size() == 0
+        || (!('touchedPeriods' in resource.data)
+            && changedKeys().hasOnly(['touchedPeriods'])
+            && validPeriods(request.resource.data.touchedPeriods))
+        || (validPeriods(request.resource.data.get('touchedPeriods', null))
+            && !anyClosed(uid, storedPeriods())
+            && !anyClosed(uid, request.resource.data.touchedPeriods))
+      );
+      allow delete: if isOwner(uid) && !anyClosed(uid, storedPeriods());
     }
 
     // Фактури з KSeF створює й видаляє лише сервіс; користувач міняє тільки status
