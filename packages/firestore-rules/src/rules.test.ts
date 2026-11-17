@@ -528,3 +528,31 @@ describe('ksefInbox', () => {
     await assertFails(getDoc(ref(env.unauthenticatedContext().firestore())));
   });
 });
+
+describe('ksefSync', () => {
+  const path = `users/${OWNER.uid}/ksefSync/state`;
+
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), path), { cost: { from: '2026-10-29T09:00:00Z' }, lastRun: { ok: true } });
+    });
+  });
+
+  it('власник читає стан синхронізації', async () => {
+    await assertSucceeds(getDoc(doc(as(OWNER), path)));
+    await assertSucceeds(getDocs(collection(as(OWNER), `users/${OWNER.uid}/ksefSync`)));
+  });
+
+  it('клієнт не пише й не видаляє: точку продовження веде лише сервіс', async () => {
+    const db = as(OWNER);
+    await assertFails(setDoc(doc(db, path), { cost: { from: '2026-01-01T00:00:00Z' } }));
+    await assertFails(updateDoc(doc(db, path), { 'lastRun.ok': false }));
+    await assertFails(deleteDoc(doc(db, path)));
+    await assertFails(setDoc(doc(db, `users/${OWNER.uid}/ksefSync/other`), { x: 1 }));
+  });
+
+  it('чужий і неавторизований не читають', async () => {
+    await assertFails(getDoc(doc(as(STRANGER), path)));
+    await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), path)));
+  });
+});
