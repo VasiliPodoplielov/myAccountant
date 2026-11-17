@@ -1,0 +1,11 @@
+# Раз на добу вночі: KSeF радить для малого обсягу добовий цикл у нічному вікні, де ліміти вищі (20:00–06:00)
+[Unit]
+Description=JDG Ledger: codzienna synchronizacja z KSeF
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Europe/Warsaw
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

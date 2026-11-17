@@ -3,7 +3,7 @@ rules_version = '2';
 // Доступ мають лише власник (uid) і лише з allowlist: документ meta/allowlist { emails: [...] }.
 // meta/allowlist клієнту недоступний ні на читання, ні на запис: список веде власник у консолі Firebase.
 // Адреси в allowlist зберігати малими літерами.
-// Серверні сервіси (firebase-admin) правила обходять, тож ksefInbox пишуть вони.
+// Серверні сервіси (firebase-admin) правила обходять, тож ksefInbox і ksefSync пишуть вони (apps/ksef-sync).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -19,7 +19,7 @@ service cloud.firestore {
       return request.auth.uid == uid && isAllowlisted();
     }
 
-    // Колекції користувача з повним доступом власника. documents, periods, locks і ksefInbox мають свої правила нижче.
+    // Колекції користувача з повним доступом власника. documents, periods, locks, ksefInbox і ksefSync мають свої правила нижче.
     function isOwnedCollection(name) {
       return name in [
         'settings', 'fixedAssets',
@@ -124,6 +124,11 @@ service cloud.firestore {
       allow update: if isOwner(uid)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status in ['new', 'accepted', 'ignored'];
+    }
+
+    // Стан синхронізації KSeF (точки продовження, останній запуск) пише лише сервіс; власник бачить його
+    match /users/{uid}/ksefSync/{doc} {
+      allow read: if isOwner(uid);
     }
 
     // Усе інше заборонено за замовчуванням

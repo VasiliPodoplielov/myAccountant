@@ -1,0 +1,27 @@
+# Синхронізація вхідних з KSeF (JDG Ledger). Запускає ksef-sync.timer; логи: journalctl -u ksef-sync
+[Unit]
+Description=JDG Ledger: synchronizacja faktur z KSeF
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=jdg
+Group=jdg
+WorkingDirectory=/opt/jdg-ledger/apps/ksef-sync
+EnvironmentFile=/etc/jdg-ledger/ksef-sync.env
+ExecStart=/usr/bin/node /opt/jdg-ledger/apps/ksef-sync/dist/main.mjs sync
+# перша синхронізація за багато місяців чекає на ліміти KSeF (64 фактури на годину)
+TimeoutStartSec=6h
+
+# обмеження: сервісу потрібні лише мережа й читання своїх секретів
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/jdg-ledger
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+UMask=0077

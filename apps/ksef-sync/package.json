@@ -1,0 +1,25 @@
+{
+  "name": "@jdg/ksef-sync",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --external:firebase-admin --outfile=dist/main.mjs",
+    "start": "node dist/main.mjs",
+    "test": "firebase emulators:exec --config ../../firebase.json --project demo-jdg-ledger --only firestore \"vitest run --testTimeout=15000\"",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@jdg/core": "*",
+    "firebase-admin": "^14.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@xmldom/xmldom": "^0.9.12",
+    "esbuild": "^0.28.2",
+    "firebase-tools": "^15.33.0",
+    "vitest": "^5.0.4",
+    "xml-crypto": "^6.4.0"
+  }
+}
